@@ -1,0 +1,237 @@
+package tui
+
+import (
+	"fmt"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/cliswitch/gocc/internal/config"
+)
+
+type fallbackCandidate struct {
+	ID       string
+	Name     string
+	Selected bool
+}
+
+type fallbackEditModel struct {
+	profileID  string // the profile being edited (exclude from candidates)
+	candidates []fallbackCandidate
+	order      []string // ordered list of selected profile IDs
+	cursor     int
+	section    int // 0=candidates list, 1=order list
+}
+
+func newFallbackEditModel(profileID string, currentChain []string, allProfiles []DisplayProfile) *fallbackEditModel {
+	selected := make(map[string]bool)
+	for _, id := range currentChain {
+		selected[id] = true
+	}
+
+	var candidates []fallbackCandidate
+	for _, p := range allProfiles {
+		if p.ID == config.NativeProfileID || p.ID == profileID {
+			continue
+		}
+		candidates = append(candidates, fallbackCandidate{
+			ID:       p.ID,
+			Name:     p.Name,
+			Selected: selected[p.ID],
+		})
+	}
+
+	// Preserve order from currentChain for selected items
+	order := make([]string, 0, len(currentChain))
+	for _, id := range currentChain {
+		// Only include if still in candidates
+		for _, c := range candidates {
+			if c.ID == id {
+				order = append(order, id)
+				break
+			}
+		}
+	}
+
+	return &fallbackEditModel{
+		profileID:  profileID,
+		candidates: candidates,
+		order:      order,
+	}
+}
+
+func (fe *fallbackEditModel) totalItems() int {
+	if fe.section == 0 {
+		return len(fe.candidates)
+	}
+	return len(fe.order)
+}
+
+func (fe *fallbackEditModel) toggleCandidate() {
+	if fe.section != 0 || fe.cursor >= len(fe.candidates) {
+		return
+	}
+	c := &fe.candidates[fe.cursor]
+	c.Selected = !c.Selected
+	if c.Selected {
+		fe.order = append(fe.order, c.ID)
+	} else {
+		// Remove from order
+		newOrder := make([]string, 0, len(fe.order))
+		for _, id := range fe.order {
+			if id != c.ID {
+				newOrder = append(newOrder, id)
+			}
+		}
+		fe.order = newOrder
+	}
+}
+
+func (fe *fallbackEditModel) moveOrder(delta int) {
+	if fe.section != 1 || len(fe.order) < 2 {
+		return
+	}
+	newIdx := fe.cursor + delta
+	if newIdx < 0 || newIdx >= len(fe.order) {
+		return
+	}
+	fe.order[fe.cursor], fe.order[newIdx] = fe.order[newIdx], fe.order[fe.cursor]
+	fe.cursor = newIdx
+}
+
+func (fe *fallbackEditModel) candidateName(id string) string {
+	for _, c := range fe.candidates {
+		if c.ID == id {
+			return c.Name
+		}
+	}
+	return id
+}
+
+func (m Model) updateFallbackEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
+	fe := m.fallbackEdit
+	if fe == nil {
+		m.returnToProfileForm()
+		return m, nil
+	}
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "ctrl+s":
+			if m.profileForm != nil {
+				m.profileForm.profile.FallbackChain = make([]string, len(fe.order))
+				copy(m.profileForm.profile.FallbackChain, fe.order)
+			}
+			m.fallbackEdit = nil
+			m.returnToProfileForm()
+			return m, nil
+
+		case "esc":
+			m.fallbackEdit = nil
+			m.returnToProfileForm()
+			return m, nil
+
+		case "up", "k":
+			if fe.cursor > 0 {
+				fe.cursor--
+			}
+
+		case "down", "j":
+			total := fe.totalItems()
+			if fe.cursor < total-1 {
+				fe.cursor++
+			}
+
+		case "tab":
+			// Switch between candidates and order sections
+			if fe.section == 0 && len(fe.order) > 0 {
+				fe.section = 1
+				fe.cursor = 0
+			} else {
+				fe.section = 0
+				fe.cursor = 0
+			}
+
+		case " ":
+			fe.toggleCandidate()
+
+		case "K":
+			if fe.section == 1 {
+				fe.moveOrder(-1)
+			}
+
+		case "J":
+			if fe.section == 1 {
+				fe.moveOrder(1)
+			}
+		}
+	}
+
+	return m, nil
+}
+
+func (m Model) viewFallbackEdit() string {
+	fe := m.fallbackEdit
+	if fe == nil {
+		return ""
+	}
+
+	s := titleStyle.Render("Edit Fallback Chain") + "\n\n"
+
+	sectionTitle := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+	selectedItem := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	normalItem := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	// Candidates section
+	active := ""
+	if fe.section == 0 {
+		active = " (active)"
+	}
+	s += sectionTitle.Render("Candidates"+active) + "\n"
+	for i, c := range fe.candidates {
+		prefix := "  "
+		style := normalItem
+		if fe.section == 0 && i == fe.cursor {
+			prefix = "> "
+			style = selectedItem
+		}
+		check := "[ ]"
+		if c.Selected {
+			check = "[x]"
+		}
+		s += prefix + check + " " + style.Render(c.Name) + "\n"
+	}
+	if len(fe.candidates) == 0 {
+		s += "  " + dimStyle.Render("(no candidates available)") + "\n"
+	}
+
+	s += "\n"
+
+	// Order section
+	active = ""
+	if fe.section == 1 {
+		active = " (active)"
+	}
+	s += sectionTitle.Render("Fallback Order"+active) + "\n"
+	for i, id := range fe.order {
+		prefix := "  "
+		style := normalItem
+		if fe.section == 1 && i == fe.cursor {
+			prefix = "> "
+			style = selectedItem
+		}
+		name := fe.candidateName(id)
+		s += prefix + style.Render(fmt.Sprintf("%d. %s", i+1, name)) + "\n"
+	}
+	if len(fe.order) == 0 {
+		s += "  " + dimStyle.Render("(none selected)") + "\n"
+	}
+
+	hints := []string{"↑↓ Navigate", "Space Toggle", "Tab Switch Section", "K/J Reorder", "Ctrl+S Save", "Esc Cancel"}
+	s += "\n" + renderStatusBar(hints)
+	return s
+}
