@@ -61,7 +61,9 @@ func run() error {
 	}
 
 	cfg.Global.LastProfile = profile.ID
-	config.SaveConfig(cfg)
+	if err := config.SaveConfig(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "gocc: warning: failed to save last profile: %v\n", err)
+	}
 
 	resolved := config.Resolve(cfg.Global, profile)
 

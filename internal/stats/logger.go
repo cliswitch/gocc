@@ -124,12 +124,10 @@ func (l *SessionLogger) OnRequestStart(ctx context.Context, e llmapimux.RequestS
 		}
 	}
 
-	hasTools := false
 	hasSystem := false
 	toolCount := 0
 	messageCount := 0
 	if e.IRRequest != nil {
-		hasTools = len(e.IRRequest.Tools) > 0
 		hasSystem = len(e.IRRequest.SystemPrompt) > 0
 		toolCount = len(e.IRRequest.Tools)
 		messageCount = len(e.IRRequest.Messages)
@@ -158,7 +156,7 @@ func (l *SessionLogger) OnRequestStart(ctx context.Context, e llmapimux.RequestS
 		ModelLevel:       modelLevel,
 		RequestModel:     requestModel,
 		MessageCount:     messageCount,
-		HasTools:         hasTools,
+		HasTools:         toolCount > 0,
 		HasSystem:        hasSystem,
 	}
 	if err := writeJSONL(l.jsonlFile, rec); err != nil {

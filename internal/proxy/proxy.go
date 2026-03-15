@@ -140,10 +140,9 @@ func extraBodyToRaw(m map[string]any) (map[string]json.RawMessage, error) {
 	return result, nil
 }
 
-type candidateExtra struct {
+type endpointKey struct {
 	baseURL string
 	apiKey  string
-	extra   map[string]json.RawMessage
 }
 
 func buildRequestModifier(profiles []config.Profile) (llmapimux.RequestModifier, error) {
@@ -159,30 +158,25 @@ func buildRequestModifier(profiles []config.Profile) (llmapimux.RequestModifier,
 		return nil, nil
 	}
 
-	var chain []candidateExtra
+	lookup := make(map[endpointKey]map[string]json.RawMessage, len(profiles))
 	for _, p := range profiles {
-		ce := candidateExtra{
-			baseURL: p.BaseURL,
-			apiKey:  p.APIKey,
+		if len(p.ExtraBody) == 0 {
+			continue
 		}
-		if len(p.ExtraBody) > 0 {
-			raw, err := extraBodyToRaw(p.ExtraBody)
-			if err != nil {
-				return nil, fmt.Errorf("profile %q: %w", p.Name, err)
-			}
-			ce.extra = raw
+		raw, err := extraBodyToRaw(p.ExtraBody)
+		if err != nil {
+			return nil, fmt.Errorf("profile %q: %w", p.Name, err)
 		}
-		chain = append(chain, ce)
+		key := endpointKey{p.BaseURL, p.APIKey}
+		// First profile with this key wins (matches fallback priority order).
+		if _, exists := lookup[key]; !exists {
+			lookup[key] = raw
+		}
 	}
 
 	return func(ctx context.Context, req *llmapimux.Request, target llmapimux.RouteResult) {
-		for _, ce := range chain {
-			if ce.baseURL == target.BaseURL && ce.apiKey == target.APIKey {
-				if ce.extra != nil {
-					req.OutboundExtra = ce.extra
-				}
-				return
-			}
+		if extra, ok := lookup[endpointKey{target.BaseURL, target.APIKey}]; ok {
+			req.OutboundExtra = extra
 		}
 	}, nil
 }

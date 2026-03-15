@@ -9,10 +9,11 @@ import (
 )
 
 var (
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	normalStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	titleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).MarginBottom(1)
+	selectedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	normalStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	dimStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	titleStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true).MarginBottom(1)
+	sectionTitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
 )
 
 // totalItems returns the number of selectable items (profiles + config row).

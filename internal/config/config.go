@@ -154,6 +154,11 @@ func CloneProfile(p Profile) Profile {
 }
 
 func ValidateConfig(cfg *Config) []error {
+	profileIDs := make(map[string]bool, len(cfg.Profiles))
+	for _, p := range cfg.Profiles {
+		profileIDs[p.ID] = true
+	}
+
 	var errs []error
 	for _, p := range cfg.Profiles {
 		if p.Protocol != ProtocolNative {
@@ -171,7 +176,7 @@ func ValidateConfig(cfg *Config) []error {
 			if fbID == NativeProfileID {
 				errs = append(errs, fmt.Errorf("profile %q: native profile cannot be in fallback chain", p.Name))
 			}
-			if _, ok := FindProfile(cfg, fbID); !ok {
+			if !profileIDs[fbID] {
 				errs = append(errs, fmt.Errorf("profile %q: fallback references unknown profile %q", p.Name, fbID))
 			}
 		}

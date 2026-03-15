@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/cliswitch/gocc/internal/config"
 )
 
@@ -17,7 +16,8 @@ type fallbackCandidate struct {
 type fallbackEditModel struct {
 	profileID  string // the profile being edited (exclude from candidates)
 	candidates []fallbackCandidate
-	order      []string // ordered list of selected profile IDs
+	nameMap    map[string]string // id -> name for O(1) lookup
+	order      []string          // ordered list of selected profile IDs
 	cursor     int
 	section    int // 0=candidates list, 1=order list
 }
@@ -40,21 +40,23 @@ func newFallbackEditModel(profileID string, currentChain []string, allProfiles [
 		})
 	}
 
-	// Preserve order from currentChain for selected items
+	// Build name lookup map and use selected map for O(1) chain filtering.
+	nameMap := make(map[string]string, len(candidates))
+	for _, c := range candidates {
+		nameMap[c.ID] = c.Name
+	}
+
 	order := make([]string, 0, len(currentChain))
 	for _, id := range currentChain {
-		// Only include if still in candidates
-		for _, c := range candidates {
-			if c.ID == id {
-				order = append(order, id)
-				break
-			}
+		if selected[id] {
+			order = append(order, id)
 		}
 	}
 
 	return &fallbackEditModel{
 		profileID:  profileID,
 		candidates: candidates,
+		nameMap:    nameMap,
 		order:      order,
 	}
 }
@@ -99,10 +101,8 @@ func (fe *fallbackEditModel) moveOrder(delta int) {
 }
 
 func (fe *fallbackEditModel) candidateName(id string) string {
-	for _, c := range fe.candidates {
-		if c.ID == id {
-			return c.Name
-		}
+	if name, ok := fe.nameMap[id]; ok {
+		return name
 	}
 	return id
 }
@@ -182,22 +182,18 @@ func (m Model) viewFallbackEdit() string {
 
 	s := titleStyle.Render("Edit Fallback Chain") + "\n\n"
 
-	sectionTitle := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
-	selectedItem := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	normalItem := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
 	// Candidates section
 	active := ""
 	if fe.section == 0 {
 		active = " (active)"
 	}
-	s += sectionTitle.Render("Candidates"+active) + "\n"
+	s += sectionTitleStyle.Render("Candidates"+active) + "\n"
 	for i, c := range fe.candidates {
 		prefix := "  "
-		style := normalItem
+		style := normalStyle
 		if fe.section == 0 && i == fe.cursor {
 			prefix = "> "
-			style = selectedItem
+			style = selectedStyle
 		}
 		check := "[ ]"
 		if c.Selected {
@@ -216,13 +212,13 @@ func (m Model) viewFallbackEdit() string {
 	if fe.section == 1 {
 		active = " (active)"
 	}
-	s += sectionTitle.Render("Fallback Order"+active) + "\n"
+	s += sectionTitleStyle.Render("Fallback Order"+active) + "\n"
 	for i, id := range fe.order {
 		prefix := "  "
-		style := normalItem
+		style := normalStyle
 		if fe.section == 1 && i == fe.cursor {
 			prefix = "> "
-			style = selectedItem
+			style = selectedStyle
 		}
 		name := fe.candidateName(id)
 		s += prefix + style.Render(fmt.Sprintf("%d. %s", i+1, name)) + "\n"

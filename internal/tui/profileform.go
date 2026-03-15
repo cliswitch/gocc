@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -69,6 +71,16 @@ var focusInputMap = [fFieldCount]int{
 
 var defaultLevels = []string{"", "haiku", "sonnet", "opus"}
 var effortLevels = []string{"", "low", "medium", "high", "max"}
+
+// Focus indices for native profile fields.
+const (
+	nfProxies = iota
+	nfClaudeArgs
+	nfCustomEnv
+	nfInheritArgs
+	nfInheritEnv
+	nfFieldCount // sentinel — must be last
+)
 
 const labelWidth = 20
 
@@ -137,7 +149,7 @@ func formatInt(n int) string {
 
 func (m *profileFormModel) totalFocusable() int {
 	if m.isNative {
-		return 5 // proxies + claude_args + custom_env + inherit_args + inherit_env
+		return nfFieldCount
 	}
 	return fFieldCount
 }
@@ -162,30 +174,35 @@ func (m *profileFormModel) updateFocus() {
 	}
 }
 
-func (m *profileFormModel) applyToProfile() {
-	if m.isNative {
+// populateFromInputs writes the current text-input values into dst.
+func (m *profileFormModel) populateFromInputs(dst *config.Profile) {
+	if m.isNative || len(m.inputs) == 0 {
 		return
 	}
-	m.profile.Name = m.inputs[0].Value()
-	m.profile.BaseURL = strings.TrimRight(m.inputs[1].Value(), "/")
-	m.profile.APIKey = m.inputs[2].Value()
-	m.profile.Models.SmallFastModel = m.inputs[3].Value()
-	m.profile.Models.HaikuModel = m.inputs[4].Value()
-	m.profile.Models.SonnetModel = m.inputs[5].Value()
-	m.profile.Models.OpusModel = m.inputs[6].Value()
-	m.profile.Models.SubagentModel = m.inputs[7].Value()
+	dst.Name = m.inputs[0].Value()
+	dst.BaseURL = strings.TrimRight(m.inputs[1].Value(), "/")
+	dst.APIKey = m.inputs[2].Value()
+	dst.Models.SmallFastModel = m.inputs[3].Value()
+	dst.Models.HaikuModel = m.inputs[4].Value()
+	dst.Models.SonnetModel = m.inputs[5].Value()
+	dst.Models.OpusModel = m.inputs[6].Value()
+	dst.Models.SubagentModel = m.inputs[7].Value()
 	if v := m.inputs[8].Value(); v != "" {
 		n, _ := strconv.Atoi(v)
-		m.profile.Reasoning.MaxOutputTokens = n
+		dst.Reasoning.MaxOutputTokens = n
 	} else {
-		m.profile.Reasoning.MaxOutputTokens = 0
+		dst.Reasoning.MaxOutputTokens = 0
 	}
 	if v := m.inputs[9].Value(); v != "" {
 		n, _ := strconv.Atoi(v)
-		m.profile.Reasoning.MaxThinkingTokens = n
+		dst.Reasoning.MaxThinkingTokens = n
 	} else {
-		m.profile.Reasoning.MaxThinkingTokens = 0
+		dst.Reasoning.MaxThinkingTokens = 0
 	}
+}
+
+func (m *profileFormModel) applyToProfile() {
+	m.populateFromInputs(&m.profile)
 }
 
 func (m *profileFormModel) validate() error {
@@ -206,30 +223,53 @@ func (m *profileFormModel) validate() error {
 }
 
 func (m *profileFormModel) isDirty() bool {
-	m.applyToProfile()
-	p := m.profile
 	o := m.origProfile
 	if m.isNative {
-		return p.Proxy != o.Proxy ||
-			!slicesEqual(p.ClaudeArgs, o.ClaudeArgs) ||
-			!mapsEqual(p.CustomEnv, o.CustomEnv) ||
-			!boolPtrEqual(p.InheritGlobalArgs, o.InheritGlobalArgs) ||
-			!boolPtrEqual(p.InheritGlobalEnv, o.InheritGlobalEnv)
+		return m.profile.Proxy != o.Proxy ||
+			!slices.Equal(m.profile.ClaudeArgs, o.ClaudeArgs) ||
+			!maps.Equal(m.profile.CustomEnv, o.CustomEnv) ||
+			!boolPtrEqual(m.profile.InheritGlobalArgs, o.InheritGlobalArgs) ||
+			!boolPtrEqual(m.profile.InheritGlobalEnv, o.InheritGlobalEnv)
 	}
-	return p.Name != o.Name ||
-		p.Protocol != o.Protocol ||
-		p.BaseURL != o.BaseURL ||
-		p.APIKey != o.APIKey ||
-		p.Models != o.Models ||
-		p.Reasoning != o.Reasoning ||
-		!mapsEqual(p.CustomHeaders, o.CustomHeaders) ||
-		!anyMapsEqual(p.ExtraBody, o.ExtraBody) ||
-		!slicesEqual(p.FallbackChain, o.FallbackChain) ||
-		p.Proxy != o.Proxy ||
-		!slicesEqual(p.ClaudeArgs, o.ClaudeArgs) ||
-		!mapsEqual(p.CustomEnv, o.CustomEnv) ||
-		!boolPtrEqual(p.InheritGlobalArgs, o.InheritGlobalArgs) ||
-		!boolPtrEqual(p.InheritGlobalEnv, o.InheritGlobalEnv)
+	// Compare text-input scalars directly against origProfile.
+	if len(m.inputs) > 0 {
+		if m.inputs[0].Value() != o.Name ||
+			strings.TrimRight(m.inputs[1].Value(), "/") != o.BaseURL ||
+			m.inputs[2].Value() != o.APIKey ||
+			m.inputs[3].Value() != o.Models.SmallFastModel ||
+			m.inputs[4].Value() != o.Models.HaikuModel ||
+			m.inputs[5].Value() != o.Models.SonnetModel ||
+			m.inputs[6].Value() != o.Models.OpusModel ||
+			m.inputs[7].Value() != o.Models.SubagentModel {
+			return true
+		}
+		maxOut := 0
+		if v := m.inputs[8].Value(); v != "" {
+			maxOut, _ = strconv.Atoi(v)
+		}
+		if maxOut != o.Reasoning.MaxOutputTokens {
+			return true
+		}
+		maxThink := 0
+		if v := m.inputs[9].Value(); v != "" {
+			maxThink, _ = strconv.Atoi(v)
+		}
+		if maxThink != o.Reasoning.MaxThinkingTokens {
+			return true
+		}
+	}
+	// Compare non-text-input fields from m.profile directly.
+	return m.profile.Protocol != o.Protocol ||
+		m.profile.Models.MainModel != o.Models.MainModel ||
+		m.profile.Reasoning.EffortLevel != o.Reasoning.EffortLevel ||
+		!maps.Equal(m.profile.CustomHeaders, o.CustomHeaders) ||
+		!reflect.DeepEqual(m.profile.ExtraBody, o.ExtraBody) ||
+		!slices.Equal(m.profile.FallbackChain, o.FallbackChain) ||
+		m.profile.Proxy != o.Proxy ||
+		!slices.Equal(m.profile.ClaudeArgs, o.ClaudeArgs) ||
+		!maps.Equal(m.profile.CustomEnv, o.CustomEnv) ||
+		!boolPtrEqual(m.profile.InheritGlobalArgs, o.InheritGlobalArgs) ||
+		!boolPtrEqual(m.profile.InheritGlobalEnv, o.InheritGlobalEnv)
 }
 
 func boolPtrEqual(a, b *bool) bool {
@@ -242,36 +282,6 @@ func boolPtrEqual(a, b *bool) bool {
 	return *a == *b
 }
 
-func mapsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if bv, ok := b[k]; !ok || bv != v {
-			return false
-		}
-	}
-	return true
-}
-
-func anyMapsEqual(a, b map[string]any) bool {
-	if len(a) == 0 && len(b) == 0 {
-		return true
-	}
-	return reflect.DeepEqual(a, b)
-}
-
-func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
 
 func isCycleField(focus int) bool {
 	return focus == fProtocol || focus == fMainModel || focus == fEffortLevel
@@ -366,24 +376,24 @@ func (m Model) updateProfileForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", "space":
 			if pf.isNative {
 				switch pf.focus {
-				case 0:
+				case nfProxies:
 					m.proxyEdit = newProxyEditModel(pf.profile.Proxy)
 					m.mode = ModeProxyEdit
 					return m, nil
-				case 1:
+				case nfClaudeArgs:
 					pf.applyToProfile()
 					m.argsEdit = newArgsEditModel(pf.profile.ClaudeArgs)
 					m.mode = ModeArgsEdit
 					return m, nil
-				case 2:
+				case nfCustomEnv:
 					pf.applyToProfile()
 					m.envEdit = newEnvEditModel(pf.profile.CustomEnv)
 					m.mode = ModeEnvEdit
 					return m, nil
-				case 3:
+				case nfInheritArgs:
 					pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
 					return m, nil
-				case 4:
+				case nfInheritEnv:
 					pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
 					return m, nil
 				}
@@ -438,10 +448,10 @@ func (m Model) updateProfileForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if pf.isNative {
 				// Handle toggle fields for native profile
 				switch pf.focus {
-				case 3:
+				case nfInheritArgs:
 					pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
 					return m, nil
-				case 4:
+				case nfInheritEnv:
 					pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
 					return m, nil
 				}
@@ -505,30 +515,30 @@ func (m Model) viewProfileForm() string {
 	s := titleStyle.Render(title) + "\n\n"
 
 	if pf.isNative {
-		s += pf.viewSummaryField(0, "proxies", proxiesSummary(pf.profile.Proxy))
+		s += pf.viewSummaryField(nfProxies, "proxies", proxiesSummary(pf.profile.Proxy))
 		s += sectionDivider("Custom")
-		s += pf.viewSummaryField(1, "claude_args", argsSummary(pf.profile.ClaudeArgs))
-		s += pf.viewSummaryField(2, "custom_env", envSummary(pf.profile.CustomEnv))
-		s += pf.viewToggleField(3, "inherit_global_args", pf.profile.InheritGlobalArgs)
-		s += pf.viewToggleField(4, "inherit_global_env", pf.profile.InheritGlobalEnv)
+		s += pf.viewSummaryField(nfClaudeArgs, "claude_args", argsSummary(pf.profile.ClaudeArgs))
+		s += pf.viewSummaryField(nfCustomEnv, "custom_env", envSummary(pf.profile.CustomEnv))
+		s += pf.viewToggleField(nfInheritArgs, "inherit_global_args", pf.profile.InheritGlobalArgs)
+		s += pf.viewToggleField(nfInheritEnv, "inherit_global_env", pf.profile.InheritGlobalEnv)
 	} else {
-		s += pf.viewInputField(fName, "Name", 0)
+		s += pf.viewInputField(fName, "Name")
 		s += pf.viewCycleField(fProtocol, "Protocol", pf.profile.Protocol)
-		s += pf.viewInputField(fBaseURL, "Base URL", 1)
+		s += pf.viewInputField(fBaseURL, "Base URL")
 		s += pf.viewAPIKeyField()
 
 		s += sectionDivider("Models")
 		s += pf.viewCycleField(fMainModel, "main_model", pf.profile.Models.MainModel)
-		s += pf.viewInputField(fSmallFastModel, "small_fast_model", 3)
-		s += pf.viewInputField(fHaikuModel, "haiku_model", 4)
-		s += pf.viewInputField(fSonnetModel, "sonnet_model", 5)
-		s += pf.viewInputField(fOpusModel, "opus_model", 6)
-		s += pf.viewInputField(fSubagentModel, "subagent_model", 7)
+		s += pf.viewInputField(fSmallFastModel, "small_fast_model")
+		s += pf.viewInputField(fHaikuModel, "haiku_model")
+		s += pf.viewInputField(fSonnetModel, "sonnet_model")
+		s += pf.viewInputField(fOpusModel, "opus_model")
+		s += pf.viewInputField(fSubagentModel, "subagent_model")
 
 		s += sectionDivider("Reasoning")
 		s += pf.viewCycleField(fEffortLevel, "effort_level", pf.profile.Reasoning.EffortLevel)
-		s += pf.viewInputField(fMaxOutput, "max_output_tokens", 8)
-		s += pf.viewInputField(fMaxThinking, "max_thinking_tokens", 9)
+		s += pf.viewInputField(fMaxOutput, "max_output_tokens")
+		s += pf.viewInputField(fMaxThinking, "max_thinking_tokens")
 
 		s += sectionDivider("Fallback")
 		s += pf.viewSummaryField(fFallback, "fallback_chain", fallbackSummary(pf.profile.FallbackChain))
@@ -554,10 +564,10 @@ func (m Model) viewProfileForm() string {
 	if !pf.isNative && isCycleField(pf.focus) {
 		hints = append(hints, "←/→ cycle value")
 	}
-	if isSummaryField(pf.focus) || (pf.isNative && pf.focus == 0) {
+	if isSummaryField(pf.focus) || (pf.isNative && pf.focus == nfProxies) {
 		hints = append(hints, "enter edit")
 	}
-	if isToggleField(pf.focus) || (pf.isNative && (pf.focus == 3 || pf.focus == 4)) {
+	if isToggleField(pf.focus) || (pf.isNative && (pf.focus == nfInheritArgs || pf.focus == nfInheritEnv)) {
 		hints = append(hints, "enter/space toggle")
 	}
 	hints = append(hints, "ctrl+s save", "esc cancel")
@@ -565,7 +575,8 @@ func (m Model) viewProfileForm() string {
 	return s
 }
 
-func (pf *profileFormModel) viewInputField(focusIdx int, label string, inputIdx int) string {
+func (pf *profileFormModel) viewInputField(focusIdx int, label string) string {
+	inputIdx := focusInputMap[focusIdx]
 	focused := pf.focus == focusIdx
 	var content string
 	if focused {
