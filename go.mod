@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/google/uuid v1.6.0
-	github.com/llmapimux/llmapimux v0.0.0-20260315093042-c67fdbb2883c
+	github.com/llmapimux/llmapimux v0.0.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 

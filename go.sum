@@ -30,8 +30,8 @@ github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/llmapimux/llmapimux v0.0.0-20260315093042-c67fdbb2883c h1:JT8S8wMvIo7DYqJqt+ixQDEOwxPh+2g1ggQ7XqYlQf0=
-github.com/llmapimux/llmapimux v0.0.0-20260315093042-c67fdbb2883c/go.mod h1:YhQOKU9xac/BF7nNcGrQU7u4srNwzArJPFvATOEGjzo=
+github.com/llmapimux/llmapimux v0.0.2 h1:HVCREnZrI2Htfuk6UZt5DsFOBKOw34SmHw6jdbz3j1A=
+github.com/llmapimux/llmapimux v0.0.2/go.mod h1:YhQOKU9xac/BF7nNcGrQU7u4srNwzArJPFvATOEGjzo=
 github.com/lucasb-eyer/go-colorful v1.3.0 h1:2/yBRLdWBZKrf7gB40FoiKfAWYQ0lqNcbuQwVHXptag=
 github.com/lucasb-eyer/go-colorful v1.3.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
