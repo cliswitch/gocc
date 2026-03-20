@@ -231,45 +231,23 @@ func (m *profileFormModel) isDirty() bool {
 			!boolPtrEqual(m.profile.InheritGlobalArgs, o.InheritGlobalArgs) ||
 			!boolPtrEqual(m.profile.InheritGlobalEnv, o.InheritGlobalEnv)
 	}
-	// Compare text-input scalars directly against origProfile.
-	if len(m.inputs) > 0 {
-		if m.inputs[0].Value() != o.Name ||
-			strings.TrimRight(m.inputs[1].Value(), "/") != o.BaseURL ||
-			m.inputs[2].Value() != o.APIKey ||
-			m.inputs[3].Value() != o.Models.SmallFastModel ||
-			m.inputs[4].Value() != o.Models.HaikuModel ||
-			m.inputs[5].Value() != o.Models.SonnetModel ||
-			m.inputs[6].Value() != o.Models.OpusModel ||
-			m.inputs[7].Value() != o.Models.SubagentModel {
-			return true
-		}
-		maxOut := 0
-		if v := m.inputs[8].Value(); v != "" {
-			maxOut, _ = strconv.Atoi(v)
-		}
-		if maxOut != o.Reasoning.MaxOutputTokens {
-			return true
-		}
-		maxThink := 0
-		if v := m.inputs[9].Value(); v != "" {
-			maxThink, _ = strconv.Atoi(v)
-		}
-		if maxThink != o.Reasoning.MaxThinkingTokens {
-			return true
-		}
-	}
-	// Compare non-text-input fields from m.profile directly.
-	return m.profile.Protocol != o.Protocol ||
-		m.profile.Models.MainModel != o.Models.MainModel ||
-		m.profile.Reasoning.EffortLevel != o.Reasoning.EffortLevel ||
-		!maps.Equal(m.profile.CustomHeaders, o.CustomHeaders) ||
-		!reflect.DeepEqual(m.profile.ExtraBody, o.ExtraBody) ||
-		!slices.Equal(m.profile.FallbackChain, o.FallbackChain) ||
-		m.profile.Proxy != o.Proxy ||
-		!slices.Equal(m.profile.ClaudeArgs, o.ClaudeArgs) ||
-		!maps.Equal(m.profile.CustomEnv, o.CustomEnv) ||
-		!boolPtrEqual(m.profile.InheritGlobalArgs, o.InheritGlobalArgs) ||
-		!boolPtrEqual(m.profile.InheritGlobalEnv, o.InheritGlobalEnv)
+	// Snapshot: shallow-copy m.profile, overlay text-input values.
+	snap := m.profile
+	m.populateFromInputs(&snap)
+	return snap.Name != o.Name ||
+		snap.Protocol != o.Protocol ||
+		snap.BaseURL != o.BaseURL ||
+		snap.APIKey != o.APIKey ||
+		snap.Models != o.Models ||
+		snap.Reasoning != o.Reasoning ||
+		!maps.Equal(snap.CustomHeaders, o.CustomHeaders) ||
+		!reflect.DeepEqual(snap.ExtraBody, o.ExtraBody) ||
+		!slices.Equal(snap.FallbackChain, o.FallbackChain) ||
+		snap.Proxy != o.Proxy ||
+		!slices.Equal(snap.ClaudeArgs, o.ClaudeArgs) ||
+		!maps.Equal(snap.CustomEnv, o.CustomEnv) ||
+		!boolPtrEqual(snap.InheritGlobalArgs, o.InheritGlobalArgs) ||
+		!boolPtrEqual(snap.InheritGlobalEnv, o.InheritGlobalEnv)
 }
 
 func boolPtrEqual(a, b *bool) bool {
