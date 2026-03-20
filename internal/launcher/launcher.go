@@ -72,6 +72,10 @@ func ExtractGoccFlags(args []string) (profile string, remaining []string) {
 	return
 }
 
+// mergeEnv merges base and extra environment variable slices.
+// For duplicate keys, the last occurrence wins (extra overrides base).
+// Insertion order is preserved: base keys first in their original order,
+// then any new keys from extra appended at the end.
 func mergeEnv(base, extra []string) []string {
 	env := make(map[string]string)
 	order := make([]string, 0)

@@ -14,13 +14,9 @@ const (
 	ModeProfileAdd
 	ModeDeleteConfirm
 	ModeGlobalConfig
-	ModeHeadersEdit
-	ModeExtraBodyEdit
+	ModeTextareaEdit
 	ModeFallbackEdit
 	ModeProxyEdit
-	ModeEnvEdit
-	ModeArgsEdit
-	ModeGlobalEnvEdit
 )
 
 // DisplayProfile is a summary of a profile for list display.
@@ -55,12 +51,9 @@ type Model struct {
 	// Sub-models (initialized on mode switch)
 	profileForm  *profileFormModel
 	globalConfig *globalConfigModel
-	headersEdit  *headersEditModel
-	extraBodyEdit *extraBodyEditModel
+	textEditor   *textareaEditor
 	fallbackEdit *fallbackEditModel
 	proxyEdit    *proxyEditModel
-	envEdit      *envEditModel
-	argsEdit     *argsEditModel
 	deleteTarget *DisplayProfile // for delete confirm
 }
 
@@ -100,20 +93,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDeleteConfirm(msg)
 	case ModeGlobalConfig:
 		return m.updateGlobalConfig(msg)
-	case ModeHeadersEdit:
-		return m.updateHeadersEdit(msg)
-	case ModeExtraBodyEdit:
-		return m.updateExtraBodyEdit(msg)
+	case ModeTextareaEdit:
+		return m.updateTextareaEdit(msg)
 	case ModeFallbackEdit:
 		return m.updateFallbackEdit(msg)
 	case ModeProxyEdit:
 		return m.updateProxyEdit(msg)
-	case ModeEnvEdit:
-		return m.updateEnvEdit(msg)
-	case ModeArgsEdit:
-		return m.updateArgsEdit(msg)
-	case ModeGlobalEnvEdit:
-		return m.updateGlobalEnvEdit(msg)
 	}
 	return m, nil
 }
@@ -129,18 +114,12 @@ func (m Model) View() string {
 		return m.viewDeleteConfirm()
 	case ModeGlobalConfig:
 		return m.viewGlobalConfig()
-	case ModeHeadersEdit:
-		return m.viewHeadersEdit()
-	case ModeExtraBodyEdit:
-		return m.viewExtraBodyEdit()
+	case ModeTextareaEdit:
+		return m.viewTextareaEdit()
 	case ModeFallbackEdit:
 		return m.viewFallbackEdit()
 	case ModeProxyEdit:
 		return m.viewProxyEdit()
-	case ModeEnvEdit, ModeGlobalEnvEdit:
-		return m.viewEnvEdit()
-	case ModeArgsEdit:
-		return m.viewArgsEdit()
 	}
 	return ""
 }

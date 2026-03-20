@@ -91,9 +91,7 @@ func NewSessionLogger(logsDir, profileID, profileName, goccVersion string) (*Ses
 		GoccVersion: goccVersion,
 		PID:         pid,
 	}
-	if err := writeJSONL(jsonlFile, rec); err != nil {
-		l.handleWriteError(err)
-	}
+	l.writeRecord(rec)
 	writeTextSessionHeader(textFile, sessionID, now, profileName, pid)
 
 	return l, nil
@@ -104,6 +102,14 @@ func (l *SessionLogger) handleWriteError(err error) {
 	l.writeErrOnce.Do(func() {
 		fmt.Fprintf(os.Stderr, "gocc: stats log write error: %v\n", err)
 	})
+}
+
+// writeRecord writes a JSONL record, logging the first error to stderr.
+// Callers that hold l.mu must not rely on writeRecord acquiring it.
+func (l *SessionLogger) writeRecord(rec any) {
+	if err := writeJSONL(l.jsonlFile, rec); err != nil {
+		l.handleWriteError(err)
+	}
 }
 
 // OnRequestStart implements llmapimux.StatsReporter.
@@ -159,9 +165,7 @@ func (l *SessionLogger) OnRequestStart(ctx context.Context, e llmapimux.RequestS
 		HasTools:         toolCount > 0,
 		HasSystem:        hasSystem,
 	}
-	if err := writeJSONL(l.jsonlFile, rec); err != nil {
-		l.handleWriteError(err)
-	}
+	l.writeRecord(rec)
 
 	// Write text log.
 	reqIDShort := reqShort(e.RequestID)
@@ -186,9 +190,7 @@ func (l *SessionLogger) OnFirstByte(ctx context.Context, e llmapimux.FirstByteEv
 		RequestID: e.RequestID,
 		TTFBMS:    e.TTFB.Milliseconds(),
 	}
-	if err := writeJSONL(l.jsonlFile, rec); err != nil {
-		l.handleWriteError(err)
-	}
+	l.writeRecord(rec)
 
 	// Write text log.
 	writeTextFirstByte(l.textFile, e.Time, e.TTFB, rs.attemptNum)
@@ -216,9 +218,7 @@ func (l *SessionLogger) OnStreamChunk(ctx context.Context, e llmapimux.StreamChu
 		EventType:    eventType,
 		HasUsage:     hasUsage,
 	}
-	if err := writeJSONL(l.jsonlFile, rec); err != nil {
-		l.handleWriteError(err)
-	}
+	l.writeRecord(rec)
 }
 
 // OnAttemptError implements llmapimux.StatsReporter.
@@ -255,9 +255,7 @@ func (l *SessionLogger) OnAttemptError(ctx context.Context, e llmapimux.AttemptE
 		IsConnError:    e.SendErr.IsConnError,
 		Error:          errMsg,
 	}
-	if err := writeJSONL(l.jsonlFile, rec); err != nil {
-		l.handleWriteError(err)
-	}
+	l.writeRecord(rec)
 
 	// Write text log.
 	writeTextAttemptError(l.textFile, now, e.AttemptNum, string(e.Target.Protocol),
@@ -320,9 +318,7 @@ func (l *SessionLogger) OnComplete(ctx context.Context, e llmapimux.CompleteEven
 		ActualModel:         e.ActualModel,
 		AttemptNum:          e.AttemptNum,
 	}
-	if err := writeJSONL(l.jsonlFile, rec); err != nil {
-		l.handleWriteError(err)
-	}
+	l.writeRecord(rec)
 
 	// Write text log.
 	writeTextComplete(l.textFile, e.Time, textStatus, e.TotalLatency,
@@ -362,9 +358,7 @@ func (l *SessionLogger) Close() error {
 			TotalInputTokens:  int64(l.totalInput),
 			TotalOutputTokens: int64(l.totalOutput),
 		}
-		if err := writeJSONL(l.jsonlFile, rec); err != nil {
-			l.handleWriteError(err)
-		}
+		l.writeRecord(rec)
 
 		// Write text session footer.
 		writeTextSessionFooter(l.textFile, dur, l.totalRequests, l.totalErrors, l.totalCanceled, l.totalInput, l.totalOutput, l.totalActiveTime)

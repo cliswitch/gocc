@@ -82,8 +82,13 @@ type Proxy struct {
 	NoProxy    string `yaml:"no_proxy,omitempty"`
 }
 
+const profileIDBytes = 5
+
+// GenerateProfileID returns a random 10-char hex string.
+// crypto/rand.Read is guaranteed to succeed on all supported platforms;
+// the panic is a theoretical safety net that should never trigger.
 func GenerateProfileID() string {
-	b := make([]byte, 5)
+	b := make([]byte, profileIDBytes)
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("failed to generate random id: %v", err))
 	}

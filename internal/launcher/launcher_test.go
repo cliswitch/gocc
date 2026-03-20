@@ -40,6 +40,22 @@ func TestMergeEnv(t *testing.T) {
 	}
 }
 
+func TestMergeEnv_PreservesOrder(t *testing.T) {
+	base := []string{"A=1", "B=2", "C=3"}
+	extra := []string{"B=override", "D=4"}
+	result := mergeEnv(base, extra)
+	expected := []string{"A=1", "B=override", "C=3", "D=4"}
+
+	if len(result) != len(expected) {
+		t.Fatalf("len(result) = %d, want %d; result = %v", len(result), len(expected), result)
+	}
+	for i, want := range expected {
+		if result[i] != want {
+			t.Errorf("result[%d] = %q, want %q", i, result[i], want)
+		}
+	}
+}
+
 func TestExtractGoccFlags(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 
 	"github.com/llmapimux/llmapimux"
 	"github.com/cliswitch/gocc/internal/config"
@@ -40,7 +41,11 @@ func StartProxy(primary config.Profile, allProfiles map[string]config.Profile, t
 	port := listener.Addr().(*net.TCPAddr).Port
 
 	server := &http.Server{Handler: httpMux}
-	go server.Serve(listener) //nolint:errcheck
+	go func() {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "gocc: proxy serve error: %v\n", err)
+		}
+	}()
 
 	shutdown := func() {
 		server.Close()

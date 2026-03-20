@@ -67,12 +67,12 @@ func (m Model) updateProxyEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "tab", "down":
-			pe.focus = (pe.focus + 1) % 3
+			pe.focus = (pe.focus + 1) % len(pe.inputs)
 			pe.updateFocus()
 			return m, nil
 
 		case "shift+tab", "up":
-			pe.focus = (pe.focus - 1 + 3) % 3
+			pe.focus = (pe.focus - 1 + len(pe.inputs)) % len(pe.inputs)
 			pe.updateFocus()
 			return m, nil
 		}

@@ -2,9 +2,7 @@ package tui
 
 import (
 	"fmt"
-	"maps"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -135,8 +133,8 @@ func newTextInput(value string) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
 	ti.SetValue(value)
-	ti.CharLimit = 256
-	ti.Width = 50
+	ti.CharLimit = textInputCharLimit
+	ti.Width = textInputWidth
 	return ti
 }
 
@@ -188,13 +186,13 @@ func (m *profileFormModel) populateFromInputs(dst *config.Profile) {
 	dst.Models.OpusModel = m.inputs[6].Value()
 	dst.Models.SubagentModel = m.inputs[7].Value()
 	if v := m.inputs[8].Value(); v != "" {
-		n, _ := strconv.Atoi(v)
+		n, _ := strconv.Atoi(v) // validate() catches non-numeric before save
 		dst.Reasoning.MaxOutputTokens = n
 	} else {
 		dst.Reasoning.MaxOutputTokens = 0
 	}
 	if v := m.inputs[9].Value(); v != "" {
-		n, _ := strconv.Atoi(v)
+		n, _ := strconv.Atoi(v) // validate() catches non-numeric before save
 		dst.Reasoning.MaxThinkingTokens = n
 	} else {
 		dst.Reasoning.MaxThinkingTokens = 0
@@ -223,41 +221,9 @@ func (m *profileFormModel) validate() error {
 }
 
 func (m *profileFormModel) isDirty() bool {
-	o := m.origProfile
-	if m.isNative {
-		return m.profile.Proxy != o.Proxy ||
-			!slices.Equal(m.profile.ClaudeArgs, o.ClaudeArgs) ||
-			!maps.Equal(m.profile.CustomEnv, o.CustomEnv) ||
-			!boolPtrEqual(m.profile.InheritGlobalArgs, o.InheritGlobalArgs) ||
-			!boolPtrEqual(m.profile.InheritGlobalEnv, o.InheritGlobalEnv)
-	}
-	// Snapshot: shallow-copy m.profile, overlay text-input values.
-	snap := m.profile
+	snap := config.CloneProfile(m.profile)
 	m.populateFromInputs(&snap)
-	return snap.Name != o.Name ||
-		snap.Protocol != o.Protocol ||
-		snap.BaseURL != o.BaseURL ||
-		snap.APIKey != o.APIKey ||
-		snap.Models != o.Models ||
-		snap.Reasoning != o.Reasoning ||
-		!maps.Equal(snap.CustomHeaders, o.CustomHeaders) ||
-		!reflect.DeepEqual(snap.ExtraBody, o.ExtraBody) ||
-		!slices.Equal(snap.FallbackChain, o.FallbackChain) ||
-		snap.Proxy != o.Proxy ||
-		!slices.Equal(snap.ClaudeArgs, o.ClaudeArgs) ||
-		!maps.Equal(snap.CustomEnv, o.CustomEnv) ||
-		!boolPtrEqual(snap.InheritGlobalArgs, o.InheritGlobalArgs) ||
-		!boolPtrEqual(snap.InheritGlobalEnv, o.InheritGlobalEnv)
-}
-
-func boolPtrEqual(a, b *bool) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
+	return !reflect.DeepEqual(snap, m.origProfile)
 }
 
 
@@ -312,150 +278,24 @@ func (m Model) updateProfileForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-
 		case "ctrl+s":
-			if err := pf.validate(); err != nil {
-				pf.statusMsg = err.Error()
-				return m, nil
-			}
-			pf.applyToProfile()
-			if m.callbacks.SaveProfile != nil {
-				if err := m.callbacks.SaveProfile(pf.profile, pf.isNew); err != nil {
-					pf.statusMsg = fmt.Sprintf("Save failed: %v", err)
-					return m, nil
-				}
-			}
-			m.reloadProfiles()
-			m.statusMsg = "Profile saved"
-			m.mode = ModeProfileList
-			m.profileForm = nil
-			return m, nil
-
+			return m.handleProfileFormSave()
 		case "esc":
-			if pf.isDirty() && !pf.pendingEsc {
-				pf.pendingEsc = true
-				pf.statusMsg = "Unsaved changes. Press Esc again to discard, Ctrl+S to save."
-				return m, nil
-			}
-			m.mode = ModeProfileList
-			m.profileForm = nil
-			return m, nil
-
+			return m.handleProfileFormEsc()
 		case "tab", "down":
 			pf.focus = (pf.focus + 1) % pf.totalFocusable()
 			pf.updateFocus()
 			return m, nil
-
 		case "shift+tab", "up":
 			pf.focus = (pf.focus - 1 + pf.totalFocusable()) % pf.totalFocusable()
 			pf.updateFocus()
 			return m, nil
-
 		case "enter", "space":
-			if pf.isNative {
-				switch pf.focus {
-				case nfProxies:
-					m.proxyEdit = newProxyEditModel(pf.profile.Proxy)
-					m.mode = ModeProxyEdit
-					return m, nil
-				case nfClaudeArgs:
-					pf.applyToProfile()
-					m.argsEdit = newArgsEditModel(pf.profile.ClaudeArgs)
-					m.mode = ModeArgsEdit
-					return m, nil
-				case nfCustomEnv:
-					pf.applyToProfile()
-					m.envEdit = newEnvEditModel(pf.profile.CustomEnv)
-					m.mode = ModeEnvEdit
-					return m, nil
-				case nfInheritArgs:
-					pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
-					return m, nil
-				case nfInheritEnv:
-					pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
-					return m, nil
-				}
-			} else {
-				switch pf.focus {
-				case fFallback:
-					pf.applyToProfile()
-					var allProfiles []DisplayProfile
-					if m.callbacks.Reload != nil {
-						if ps, err := m.callbacks.Reload(); err == nil {
-							allProfiles = ps
-						}
-					}
-					m.fallbackEdit = newFallbackEditModel(pf.profile.ID, pf.profile.FallbackChain, allProfiles)
-					m.mode = ModeFallbackEdit
-					return m, nil
-				case fHeaders:
-					pf.applyToProfile()
-					m.headersEdit = newHeadersEditModel(pf.profile.CustomHeaders)
-					m.mode = ModeHeadersEdit
-					return m, nil
-				case fExtraBody:
-					pf.applyToProfile()
-					m.extraBodyEdit = newExtraBodyEditModel(pf.profile.ExtraBody)
-					m.mode = ModeExtraBodyEdit
-					return m, nil
-				case fProxies:
-					pf.applyToProfile()
-					m.proxyEdit = newProxyEditModel(pf.profile.Proxy)
-					m.mode = ModeProxyEdit
-					return m, nil
-				case fClaudeArgs:
-					pf.applyToProfile()
-					m.argsEdit = newArgsEditModel(pf.profile.ClaudeArgs)
-					m.mode = ModeArgsEdit
-					return m, nil
-				case fCustomEnv:
-					pf.applyToProfile()
-					m.envEdit = newEnvEditModel(pf.profile.CustomEnv)
-					m.mode = ModeEnvEdit
-					return m, nil
-				case fInheritArgs:
-					pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
-					return m, nil
-				case fInheritEnv:
-					pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
-					return m, nil
-				}
-			}
-
-		case "left", "right":
-			if pf.isNative {
-				// Handle toggle fields for native profile
-				switch pf.focus {
-				case nfInheritArgs:
-					pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
-					return m, nil
-				case nfInheritEnv:
-					pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
-					return m, nil
-				}
-				break
-			}
-			dir := 1
-			if msg.String() == "left" {
-				dir = -1
-			}
-			switch pf.focus {
-			case fProtocol:
-				pf.profile.Protocol = cycleValue(pf.profile.Protocol, config.ValidProtocols, dir)
-				return m, nil
-			case fMainModel:
-				pf.profile.Models.MainModel = cycleValue(pf.profile.Models.MainModel, defaultLevels, dir)
-				return m, nil
-			case fEffortLevel:
-				pf.profile.Reasoning.EffortLevel = cycleValue(pf.profile.Reasoning.EffortLevel, effortLevels, dir)
-				return m, nil
-			case fInheritArgs:
-				pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
-				return m, nil
-			case fInheritEnv:
-				pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
-				return m, nil
-			}
+			return m.handleProfileFormEnter()
+		case "left":
+			return m.handleProfileFormCycle(-1)
+		case "right":
+			return m.handleProfileFormCycle(1)
 		}
 	}
 
@@ -467,6 +307,197 @@ func (m Model) updateProfileForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	return m, nil
+}
+
+func (m Model) handleProfileFormSave() (tea.Model, tea.Cmd) {
+	pf := m.profileForm
+	if err := pf.validate(); err != nil {
+		pf.statusMsg = err.Error()
+		return m, nil
+	}
+	pf.applyToProfile()
+	if m.callbacks.SaveProfile != nil {
+		if err := m.callbacks.SaveProfile(pf.profile, pf.isNew); err != nil {
+			pf.statusMsg = fmt.Sprintf("Save failed: %v", err)
+			return m, nil
+		}
+	}
+	m.reloadProfiles()
+	m.statusMsg = "Profile saved"
+	m.mode = ModeProfileList
+	m.profileForm = nil
+	return m, nil
+}
+
+func (m Model) handleProfileFormEsc() (tea.Model, tea.Cmd) {
+	pf := m.profileForm
+	if pf.isDirty() && !pf.pendingEsc {
+		pf.pendingEsc = true
+		pf.statusMsg = "Unsaved changes. Press Esc again to discard, Ctrl+S to save."
+		return m, nil
+	}
+	m.mode = ModeProfileList
+	m.profileForm = nil
+	return m, nil
+}
+
+func (m Model) handleProfileFormEnter() (tea.Model, tea.Cmd) {
+	pf := m.profileForm
+	if pf.isNative {
+		switch pf.focus {
+		case nfProxies:
+			m.proxyEdit = newProxyEditModel(pf.profile.Proxy)
+			m.mode = ModeProxyEdit
+			return m, nil
+		case nfClaudeArgs:
+			pf.applyToProfile()
+			m.textEditor = newTextareaEditor("Edit Claude Args", "One argument per line",
+				strings.Join(pf.profile.ClaudeArgs, "\n"),
+				func(text string) error {
+					m.profileForm.profile.ClaudeArgs = parseArgs(text)
+					return nil
+				},
+				func() { m.returnToProfileForm() })
+			m.mode = ModeTextareaEdit
+			return m, nil
+		case nfCustomEnv:
+			pf.applyToProfile()
+			m.textEditor = newTextareaEditor("Edit Custom Env Vars", "KEY=VALUE (one per line)",
+				formatEnvVars(pf.profile.CustomEnv),
+				func(text string) error {
+					env, err := parseEnvVars(text)
+					if err != nil {
+						return err
+					}
+					m.profileForm.profile.CustomEnv = env
+					return nil
+				},
+				func() { m.returnToProfileForm() })
+			m.mode = ModeTextareaEdit
+			return m, nil
+		case nfInheritArgs:
+			pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
+			return m, nil
+		case nfInheritEnv:
+			pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
+			return m, nil
+		}
+	} else {
+		switch pf.focus {
+		case fFallback:
+			pf.applyToProfile()
+			var allProfiles []DisplayProfile
+			if m.callbacks.Reload != nil {
+				if ps, err := m.callbacks.Reload(); err == nil {
+					allProfiles = ps
+				}
+			}
+			m.fallbackEdit = newFallbackEditModel(pf.profile.ID, pf.profile.FallbackChain, allProfiles)
+			m.mode = ModeFallbackEdit
+			return m, nil
+		case fHeaders:
+			pf.applyToProfile()
+			m.textEditor = newTextareaEditor("Edit Custom Headers", "Key: Value (one per line)",
+				formatHeaders(pf.profile.CustomHeaders),
+				func(text string) error {
+					h, err := parseHeaders(text)
+					if err != nil {
+						return err
+					}
+					m.profileForm.profile.CustomHeaders = h
+					return nil
+				},
+				func() { m.returnToProfileForm() })
+			m.mode = ModeTextareaEdit
+			return m, nil
+		case fExtraBody:
+			pf.applyToProfile()
+			m.textEditor = newTextareaEditor("Edit Extra Body", "field_name: json_value (one per line)",
+				formatExtraBody(pf.profile.ExtraBody),
+				func(text string) error {
+					eb, err := parseExtraBody(text)
+					if err != nil {
+						return err
+					}
+					m.profileForm.profile.ExtraBody = eb
+					return nil
+				},
+				func() { m.returnToProfileForm() })
+			m.mode = ModeTextareaEdit
+			return m, nil
+		case fProxies:
+			pf.applyToProfile()
+			m.proxyEdit = newProxyEditModel(pf.profile.Proxy)
+			m.mode = ModeProxyEdit
+			return m, nil
+		case fClaudeArgs:
+			pf.applyToProfile()
+			m.textEditor = newTextareaEditor("Edit Claude Args", "One argument per line",
+				strings.Join(pf.profile.ClaudeArgs, "\n"),
+				func(text string) error {
+					m.profileForm.profile.ClaudeArgs = parseArgs(text)
+					return nil
+				},
+				func() { m.returnToProfileForm() })
+			m.mode = ModeTextareaEdit
+			return m, nil
+		case fCustomEnv:
+			pf.applyToProfile()
+			m.textEditor = newTextareaEditor("Edit Custom Env Vars", "KEY=VALUE (one per line)",
+				formatEnvVars(pf.profile.CustomEnv),
+				func(text string) error {
+					env, err := parseEnvVars(text)
+					if err != nil {
+						return err
+					}
+					m.profileForm.profile.CustomEnv = env
+					return nil
+				},
+				func() { m.returnToProfileForm() })
+			m.mode = ModeTextareaEdit
+			return m, nil
+		case fInheritArgs:
+			pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
+			return m, nil
+		case fInheritEnv:
+			pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleProfileFormCycle(dir int) (tea.Model, tea.Cmd) {
+	pf := m.profileForm
+	if pf.isNative {
+		switch pf.focus {
+		case nfInheritArgs:
+			pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
+			return m, nil
+		case nfInheritEnv:
+			pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
+			return m, nil
+		}
+		return m, nil
+	}
+	switch pf.focus {
+	case fProtocol:
+		pf.profile.Protocol = cycleValue(pf.profile.Protocol, config.ValidProtocols, dir)
+		return m, nil
+	case fMainModel:
+		pf.profile.Models.MainModel = cycleValue(pf.profile.Models.MainModel, defaultLevels, dir)
+		return m, nil
+	case fEffortLevel:
+		pf.profile.Reasoning.EffortLevel = cycleValue(pf.profile.Reasoning.EffortLevel, effortLevels, dir)
+		return m, nil
+	case fInheritArgs:
+		pf.profile.InheritGlobalArgs = toggleBool(pf.profile.InheritGlobalArgs)
+		return m, nil
+	case fInheritEnv:
+		pf.profile.InheritGlobalEnv = toggleBool(pf.profile.InheritGlobalEnv)
+		return m, nil
+	}
 	return m, nil
 }
 
@@ -495,8 +526,8 @@ func (m Model) viewProfileForm() string {
 	if pf.isNative {
 		s += pf.viewSummaryField(nfProxies, "proxies", proxiesSummary(pf.profile.Proxy))
 		s += sectionDivider("Custom")
-		s += pf.viewSummaryField(nfClaudeArgs, "claude_args", argsSummary(pf.profile.ClaudeArgs))
-		s += pf.viewSummaryField(nfCustomEnv, "custom_env", envSummary(pf.profile.CustomEnv))
+		s += pf.viewSummaryField(nfClaudeArgs, "claude_args", collectionSummary(len(pf.profile.ClaudeArgs), "arg", "none"))
+		s += pf.viewSummaryField(nfCustomEnv, "custom_env", collectionSummary(len(pf.profile.CustomEnv), "var", "empty"))
 		s += pf.viewToggleField(nfInheritArgs, "inherit_global_args", pf.profile.InheritGlobalArgs)
 		s += pf.viewToggleField(nfInheritEnv, "inherit_global_env", pf.profile.InheritGlobalEnv)
 	} else {
@@ -519,16 +550,16 @@ func (m Model) viewProfileForm() string {
 		s += pf.viewInputField(fMaxThinking, "max_thinking_tokens")
 
 		s += sectionDivider("Fallback")
-		s += pf.viewSummaryField(fFallback, "fallback_chain", fallbackSummary(pf.profile.FallbackChain))
+		s += pf.viewSummaryField(fFallback, "fallback_chain", collectionSummary(len(pf.profile.FallbackChain), "profile", "none"))
 
 		s += sectionDivider("Advanced")
-		s += pf.viewSummaryField(fHeaders, "custom_headers", headersSummary(pf.profile.CustomHeaders))
-		s += pf.viewSummaryField(fExtraBody, "extra_body", extraBodySummary(pf.profile.ExtraBody))
+		s += pf.viewSummaryField(fHeaders, "custom_headers", collectionSummary(len(pf.profile.CustomHeaders), "header", "empty"))
+		s += pf.viewSummaryField(fExtraBody, "extra_body", collectionSummary(len(pf.profile.ExtraBody), "field", "empty"))
 		s += pf.viewSummaryField(fProxies, "proxies", proxiesSummary(pf.profile.Proxy))
 
 		s += sectionDivider("Custom")
-		s += pf.viewSummaryField(fClaudeArgs, "claude_args", argsSummary(pf.profile.ClaudeArgs))
-		s += pf.viewSummaryField(fCustomEnv, "custom_env", envSummary(pf.profile.CustomEnv))
+		s += pf.viewSummaryField(fClaudeArgs, "claude_args", collectionSummary(len(pf.profile.ClaudeArgs), "arg", "none"))
+		s += pf.viewSummaryField(fCustomEnv, "custom_env", collectionSummary(len(pf.profile.CustomEnv), "var", "empty"))
 		s += pf.viewToggleField(fInheritArgs, "inherit_global_args", pf.profile.InheritGlobalArgs)
 		s += pf.viewToggleField(fInheritEnv, "inherit_global_env", pf.profile.InheritGlobalEnv)
 	}
@@ -656,18 +687,11 @@ func maskAPIKey(key string) string {
 	return key[:3] + strings.Repeat("•", len(key)-8) + key[len(key)-5:]
 }
 
-func fallbackSummary(chain []string) string {
-	if len(chain) == 0 {
-		return dimStyle.Render("(none)")
+func collectionSummary(count int, unit, emptyLabel string) string {
+	if count == 0 {
+		return dimStyle.Render("(" + emptyLabel + ")")
 	}
-	return fmt.Sprintf("%d profile(s)", len(chain))
-}
-
-func headersSummary(h map[string]string) string {
-	if len(h) == 0 {
-		return dimStyle.Render("(empty)")
-	}
-	return fmt.Sprintf("%d header(s)", len(h))
+	return fmt.Sprintf("%d %s(s)", count, unit)
 }
 
 func proxiesSummary(p config.Proxy) string {

@@ -20,8 +20,8 @@ func newGlobalConfigModel(g config.GlobalConfig) *globalConfigModel {
 	ta := textarea.New()
 	ta.Placeholder = "One argument per line"
 	ta.SetValue(strings.Join(g.ClaudeArgs, "\n"))
-	ta.SetWidth(60)
-	ta.SetHeight(10)
+	ta.SetWidth(editorWidth)
+	ta.SetHeight(editorHeight)
 
 	return &globalConfigModel{
 		global:   g,
@@ -63,8 +63,21 @@ func (m Model) updateGlobalConfig(msg tea.Msg) (tea.Model, tea.Cmd) {
 				gc.textarea.Focus()
 				return m, nil
 			case 1:
-				m.envEdit = newEnvEditModel(gc.global.CustomEnv)
-				m.mode = ModeGlobalEnvEdit
+				m.textEditor = newTextareaEditor("Edit Custom Env Vars", "KEY=VALUE (one per line)",
+					formatEnvVars(gc.global.CustomEnv),
+					func(text string) error {
+						env, err := parseEnvVars(text)
+						if err != nil {
+							return err
+						}
+						gc.global.CustomEnv = env
+						if m.callbacks.SaveGlobal != nil {
+							return m.callbacks.SaveGlobal(gc.global)
+						}
+						return nil
+					},
+					func() { m.mode = ModeGlobalConfig })
+				m.mode = ModeTextareaEdit
 				return m, nil
 			}
 
@@ -134,7 +147,7 @@ func (m Model) viewGlobalConfig() string {
 			argsSum = fmt.Sprintf("%d arg(s)", len(gc.global.ClaudeArgs))
 		}
 		s += renderAlignedField(0, gc.focus, 11, "Claude Args", argsSum)
-		s += renderAlignedField(1, gc.focus, 11, "Custom Env", envSummary(gc.global.CustomEnv))
+		s += renderAlignedField(1, gc.focus, 11, "Custom Env", collectionSummary(len(gc.global.CustomEnv), "var", "empty"))
 
 		hints := []string{"tab/↓ next", "shift+tab/↑ prev", "Enter Edit", "Esc Back"}
 		s += "\n" + renderStatusBar(hints)
