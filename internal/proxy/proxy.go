@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/llmapimux/llmapimux"
 	"github.com/cliswitch/gocc/internal/config"
+	"github.com/llmapimux/llmapimux"
 )
 
 func StartProxy(primary config.Profile, allProfiles map[string]config.Profile, token string, statsReporter llmapimux.StatsReporter) (int, func(), error) {
@@ -26,9 +26,7 @@ func StartProxy(primary config.Profile, allProfiles map[string]config.Profile, t
 	if err != nil {
 		return 0, nil, fmt.Errorf("build request modifier: %w", err)
 	}
-	if reqMod != nil {
-		opts = append(opts, llmapimux.WithRequestModifier(reqMod))
-	}
+	opts = append(opts, llmapimux.WithRequestModifier(reqMod))
 	mux := llmapimux.NewMux(router, opts...)
 
 	httpMux := http.NewServeMux()
@@ -150,19 +148,11 @@ type endpointKey struct {
 	apiKey  string
 }
 
+// buildRequestModifier produces the single RequestModifier hooked into the
+// mux. It always strips Claude Code's per-request billing header on
+// non-Anthropic targets (critical for prompt-cache hits), and additionally
+// injects any profile-configured ExtraBody keyed by the outbound endpoint.
 func buildRequestModifier(profiles []config.Profile) (llmapimux.RequestModifier, error) {
-
-	hasAny := false
-	for _, p := range profiles {
-		if len(p.ExtraBody) > 0 {
-			hasAny = true
-			break
-		}
-	}
-	if !hasAny {
-		return nil, nil
-	}
-
 	lookup := make(map[endpointKey]map[string]json.RawMessage, len(profiles))
 	for _, p := range profiles {
 		if len(p.ExtraBody) == 0 {
@@ -180,6 +170,7 @@ func buildRequestModifier(profiles []config.Profile) (llmapimux.RequestModifier,
 	}
 
 	return func(ctx context.Context, req *llmapimux.Request, target llmapimux.RouteResult) {
+		stripClaudeCodeBillingHeader(req, target)
 		if extra, ok := lookup[endpointKey{target.BaseURL, target.APIKey}]; ok {
 			req.OutboundExtra = extra
 		}
