@@ -61,6 +61,7 @@ func TestExtractGoccFlags(t *testing.T) {
 		name        string
 		args        []string
 		wantProfile string
+		wantDebug   bool
 		wantRest    []string
 	}{
 		{
@@ -87,12 +88,29 @@ func TestExtractGoccFlags(t *testing.T) {
 			wantProfile: "test",
 			wantRest:    nil,
 		},
+		{
+			name:        "goccdebug alone",
+			args:        []string{"--goccdebug", "--help"},
+			wantProfile: "",
+			wantDebug:   true,
+			wantRest:    []string{"--help"},
+		},
+		{
+			name:        "goccprofile and goccdebug",
+			args:        []string{"--goccprofile", "p", "--goccdebug", "--help"},
+			wantProfile: "p",
+			wantDebug:   true,
+			wantRest:    []string{"--help"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			profile, rest := ExtractGoccFlags(tt.args)
+			profile, debug, rest := ExtractGoccFlags(tt.args)
 			if profile != tt.wantProfile {
 				t.Errorf("profile = %q, want %q", profile, tt.wantProfile)
+			}
+			if debug != tt.wantDebug {
+				t.Errorf("debug = %v, want %v", debug, tt.wantDebug)
 			}
 			if len(rest) != len(tt.wantRest) {
 				t.Errorf("rest = %v, want %v", rest, tt.wantRest)

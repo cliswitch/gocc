@@ -1,6 +1,9 @@
 package stats
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // SessionStartRecord is written once at the beginning of each gocc session.
 type SessionStartRecord struct {
@@ -70,30 +73,47 @@ type CompleteRecord struct {
 
 // AttemptErrorRecord is written when a single attempt (within a fallback chain) fails.
 type AttemptErrorRecord struct {
-	Type          string    `json:"type"`
-	Time          time.Time `json:"time"`
-	RequestID     string    `json:"request_id"`
-	AttemptNum    int       `json:"attempt_num"`
-	TargetProtocol string   `json:"target_protocol"`
-	TargetBaseURL string    `json:"target_base_url"`
-	TargetModel   string    `json:"target_model"`
-	StatusCode    int       `json:"status_code"`
-	IsTimeout     bool      `json:"is_timeout"`
-	IsConnError   bool      `json:"is_conn_error"`
-	Error         string    `json:"error"`
+	Type           string    `json:"type"`
+	Time           time.Time `json:"time"`
+	RequestID      string    `json:"request_id"`
+	AttemptNum     int       `json:"attempt_num"`
+	TargetProtocol string    `json:"target_protocol"`
+	TargetBaseURL  string    `json:"target_base_url"`
+	TargetModel    string    `json:"target_model"`
+	StatusCode     int       `json:"status_code"`
+	IsTimeout      bool      `json:"is_timeout"`
+	IsConnError    bool      `json:"is_conn_error"`
+	Error          string    `json:"error"`
 }
 
 // SessionEndRecord is written once when the gocc session exits.
 type SessionEndRecord struct {
-	Type               string    `json:"type"`
-	Time               time.Time `json:"time"`
-	SessionID          string    `json:"session_id"`
-	DurationMS         int64     `json:"duration_ms"`
-	TotalRequests      int64     `json:"total_requests"`
-	TotalErrors        int64     `json:"total_errors"`
-	TotalCanceled      int64     `json:"total_canceled"`
-	TotalInputTokens   int64     `json:"total_input_tokens"`
-	TotalOutputTokens  int64     `json:"total_output_tokens"`
+	Type              string    `json:"type"`
+	Time              time.Time `json:"time"`
+	SessionID         string    `json:"session_id"`
+	DurationMS        int64     `json:"duration_ms"`
+	TotalRequests     int64     `json:"total_requests"`
+	TotalErrors       int64     `json:"total_errors"`
+	TotalCanceled     int64     `json:"total_canceled"`
+	TotalInputTokens  int64     `json:"total_input_tokens"`
+	TotalOutputTokens int64     `json:"total_output_tokens"`
+}
+
+// RequestBodyRecord is written to the optional -debug.jsonl sidecar when the
+// session is run with debug dump enabled. It captures the IR Request handed
+// to llmapimux plus a best-effort reconstruction of the outbound upstream
+// body, so diffs between consecutive requests can pinpoint prefix instability
+// that causes prompt-cache misses.
+type RequestBodyRecord struct {
+	Type             string          `json:"type"`
+	Time             time.Time       `json:"time"`
+	RequestID        string          `json:"request_id"`
+	InboundProtocol  string          `json:"inbound_protocol"`
+	OutboundProtocol string          `json:"outbound_protocol"`
+	Streaming        bool            `json:"streaming"`
+	IRRequest        json.RawMessage `json:"ir_request,omitempty"`
+	OutboundBody     json.RawMessage `json:"outbound_body,omitempty"`
+	EncodeErr        string          `json:"encode_err,omitempty"`
 }
 
 // requestState tracks per-request state for the SessionLogger.

@@ -2,19 +2,22 @@ package stats
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/cliswitch/gocc/internal/config"
 	"github.com/google/uuid"
 	"github.com/llmapimux/llmapimux"
-	"github.com/cliswitch/gocc/internal/config"
 )
 
 // SessionLogger implements llmapimux.StatsReporter and writes log records in
 // both JSONL and human-readable text formats for a single gocc session.
+// When debug is enabled, a sidecar <base>-debug.jsonl file captures the IR
+// Request and outbound body per request for cache-miss diagnosis.
 type SessionLogger struct {
 	sessionID   string
 	startTime   time.Time
@@ -24,6 +27,7 @@ type SessionLogger struct {
 
 	jsonlFile *os.File
 	textFile  *os.File
+	debugFile *os.File // non-nil when debug dump is enabled
 
 	mu              sync.Mutex
 	totalRequests   int
@@ -40,10 +44,11 @@ type SessionLogger struct {
 }
 
 // NewSessionLogger creates a new SessionLogger, generating a UUID session ID,
-// creating two log files (JSONL and text) in logsDir, and writing the session start records.
-// If logsDir does not exist, it is created. If text file creation fails after JSONL file was
-// created, the JSONL file is cleaned up and an error is returned.
-func NewSessionLogger(logsDir, profileID, profileName, goccVersion string) (*SessionLogger, error) {
+// creating log files in logsDir, and writing the session start records. When
+// debug is true, an extra <base>-debug.jsonl sidecar is created. If any file
+// creation fails after earlier ones succeeded, the already-created files are
+// cleaned up and an error is returned.
+func NewSessionLogger(logsDir, profileID, profileName, goccVersion string, debug bool) (*SessionLogger, error) {
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("stats: create logs dir: %w", err)
 	}
@@ -55,6 +60,7 @@ func NewSessionLogger(logsDir, profileID, profileName, goccVersion string) (*Ses
 
 	jsonlPath := filepath.Join(logsDir, baseName+".jsonl")
 	textPath := filepath.Join(logsDir, baseName+".log")
+	debugPath := filepath.Join(logsDir, baseName+"-debug.jsonl")
 
 	jsonlFile, err := os.Create(jsonlPath)
 	if err != nil {
@@ -68,6 +74,19 @@ func NewSessionLogger(logsDir, profileID, profileName, goccVersion string) (*Ses
 		return nil, fmt.Errorf("stats: create text log file: %w", err)
 	}
 
+	var debugFile *os.File
+	if debug {
+		f, err := os.Create(debugPath)
+		if err != nil {
+			jsonlFile.Close()
+			textFile.Close()
+			os.Remove(jsonlPath)
+			os.Remove(textPath)
+			return nil, fmt.Errorf("stats: create debug log file: %w", err)
+		}
+		debugFile = f
+	}
+
 	l := &SessionLogger{
 		sessionID:   sessionID,
 		startTime:   now,
@@ -76,6 +95,7 @@ func NewSessionLogger(logsDir, profileID, profileName, goccVersion string) (*Ses
 		goccVersion: goccVersion,
 		jsonlFile:   jsonlFile,
 		textFile:    textFile,
+		debugFile:   debugFile,
 		requests:    make(map[string]*requestState),
 	}
 
@@ -109,6 +129,41 @@ func (l *SessionLogger) handleWriteError(err error) {
 func (l *SessionLogger) writeRecord(rec any) {
 	if err := writeJSONL(l.jsonlFile, rec); err != nil {
 		l.handleWriteError(err)
+	}
+}
+
+// writeDebugRecord writes to the optional debug sidecar, if enabled.
+func (l *SessionLogger) writeDebugRecord(rec any) {
+	if l.debugFile == nil {
+		return
+	}
+	if err := writeJSONL(l.debugFile, rec); err != nil {
+		l.handleWriteError(err)
+	}
+}
+
+// encodeOutboundBody produces a best-effort reconstruction of the outbound
+// upstream request body that llmapimux will send for this IR Request. The
+// reconstruction is exact for deterministic encoders and may diverge slightly
+// from the final wire bytes (e.g. ensureOpenAIResponsesWebSearchInclude adds
+// an `include` field after encoding), but the token-weighted prefix — which
+// is what drives prompt-cache lookups — is identical.
+func encodeOutboundBody(protocol llmapimux.Protocol, req *llmapimux.Request) ([]byte, error) {
+	if req == nil {
+		return nil, nil
+	}
+	switch protocol {
+	case llmapimux.ProtocolAnthropic:
+		return llmapimux.EncodeAnthropicRequest(req)
+	case llmapimux.ProtocolOpenAIResponses:
+		return llmapimux.EncodeOpenAIResponsesRequest(req)
+	case llmapimux.ProtocolOpenAIChat:
+		return llmapimux.EncodeOpenAIChatRequest(req)
+	case llmapimux.ProtocolGemini:
+		_, body, err := llmapimux.EncodeGeminiRequest(req)
+		return body, err
+	default:
+		return nil, fmt.Errorf("unsupported outbound protocol: %s", protocol)
 	}
 }
 
@@ -170,6 +225,32 @@ func (l *SessionLogger) OnRequestStart(ctx context.Context, e llmapimux.RequestS
 	// Write text log.
 	reqIDShort := reqShort(e.RequestID)
 	writeTextRequestStart(l.textFile, reqIDShort, e.Time, l.profileName, rs)
+
+	// Optional debug dump: IR Request + reconstructed outbound body for cache
+	// diffing. Errors here are soft — they must not break the primary log path.
+	if l.debugFile != nil {
+		debugRec := RequestBodyRecord{
+			Type:             "request_body",
+			Time:             e.Time,
+			RequestID:        e.RequestID,
+			InboundProtocol:  string(e.InboundProtocol),
+			OutboundProtocol: string(e.OutboundProtocol),
+			Streaming:        e.Streaming,
+		}
+		if e.IRRequest != nil {
+			if irBytes, err := json.Marshal(e.IRRequest); err == nil {
+				debugRec.IRRequest = irBytes
+			} else {
+				debugRec.EncodeErr = "marshal ir_request: " + err.Error()
+			}
+			if outBytes, err := encodeOutboundBody(e.OutboundProtocol, e.IRRequest); err == nil {
+				debugRec.OutboundBody = outBytes
+			} else if debugRec.EncodeErr == "" {
+				debugRec.EncodeErr = "encode outbound body: " + err.Error()
+			}
+		}
+		l.writeDebugRecord(debugRec)
+	}
 }
 
 // OnFirstByte implements llmapimux.StatsReporter.
@@ -369,6 +450,11 @@ func (l *SessionLogger) Close() error {
 		}
 		if err := l.textFile.Close(); err != nil && firstErr == nil {
 			firstErr = err
+		}
+		if l.debugFile != nil {
+			if err := l.debugFile.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 		closeErr = firstErr
 	})

@@ -55,7 +55,7 @@ func RunClaude(claudePath string, envVars []string, args []string) (int, error) 
 	return 0, nil
 }
 
-func ExtractGoccFlags(args []string) (profile string, remaining []string) {
+func ExtractGoccFlags(args []string) (profile string, debug bool, remaining []string) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--goccprofile" && i+1 < len(args) {
@@ -65,6 +65,10 @@ func ExtractGoccFlags(args []string) (profile string, remaining []string) {
 		}
 		if strings.HasPrefix(arg, "--goccprofile=") {
 			profile = strings.TrimPrefix(arg, "--goccprofile=")
+			continue
+		}
+		if arg == "--goccdebug" {
+			debug = true
 			continue
 		}
 		remaining = append(remaining, arg)
@@ -99,4 +103,3 @@ func mergeEnv(base, extra []string) []string {
 	}
 	return result
 }
-

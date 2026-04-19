@@ -62,9 +62,103 @@ func parseJSONLRecords(t *testing.T, path string) []map[string]any {
 	return records
 }
 
+func TestNewSessionLogger_DebugDumpWritesRequestBody(t *testing.T) {
+	dir := makeTempDir(t)
+	l, err := NewSessionLogger(dir, "pid", "profile", "v0.1.0", true)
+	if err != nil {
+		t.Fatalf("NewSessionLogger(debug): %v", err)
+	}
+	ctx := context.Background()
+	temp := 0.7
+	l.OnRequestStart(ctx, llmapimux.RequestStartEvent{
+		RequestID:        "req-dbg-1",
+		Time:             time.Now(),
+		InboundProtocol:  llmapimux.ProtocolAnthropic,
+		OutboundProtocol: llmapimux.ProtocolOpenAIResponses,
+		Streaming:        true,
+		IRRequest: &llmapimux.Request{
+			Model:       "gpt-5",
+			Temperature: &temp,
+			MaxTokens:   128,
+			Messages: []llmapimux.Message{
+				{Role: llmapimux.RoleUser, Content: []llmapimux.ContentPart{
+					{Type: llmapimux.ContentTypeText, Text: &llmapimux.TextContent{Text: "hi"}},
+				}},
+			},
+		},
+	})
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	var mainJSONL, debugJSONL string
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case strings.HasSuffix(name, "-debug.jsonl"):
+			debugJSONL = dir + "/" + name
+		case strings.HasSuffix(name, ".jsonl"):
+			mainJSONL = dir + "/" + name
+		}
+	}
+	if mainJSONL == "" || debugJSONL == "" {
+		t.Fatalf("expected both main and debug jsonl files, got main=%q debug=%q", mainJSONL, debugJSONL)
+	}
+
+	// Main jsonl must not contain request_body records.
+	for _, rec := range parseJSONLRecords(t, mainJSONL) {
+		if rec["type"] == "request_body" {
+			t.Errorf("request_body leaked into primary jsonl: %v", rec)
+		}
+	}
+
+	debugRecs := parseJSONLRecords(t, debugJSONL)
+	if len(debugRecs) != 1 {
+		t.Fatalf("expected 1 debug record, got %d: %v", len(debugRecs), debugRecs)
+	}
+	rec := debugRecs[0]
+	if rec["type"] != "request_body" {
+		t.Errorf("debug record type = %v, want request_body", rec["type"])
+	}
+	if rec["request_id"] != "req-dbg-1" {
+		t.Errorf("request_id = %v, want req-dbg-1", rec["request_id"])
+	}
+	if rec["outbound_protocol"] != "openai_responses" {
+		t.Errorf("outbound_protocol = %v, want openai_responses", rec["outbound_protocol"])
+	}
+	if _, ok := rec["ir_request"]; !ok {
+		t.Error("ir_request missing")
+	}
+	outBody, ok := rec["outbound_body"].(map[string]any)
+	if !ok {
+		t.Fatalf("outbound_body missing or not a JSON object: %v", rec["outbound_body"])
+	}
+	if outBody["model"] != "gpt-5" {
+		t.Errorf("outbound_body.model = %v, want gpt-5", outBody["model"])
+	}
+}
+
+func TestNewSessionLogger_DebugDisabledSkipsDebugFile(t *testing.T) {
+	dir := makeTempDir(t)
+	l, err := NewSessionLogger(dir, "pid", "profile", "v0.1.0", false)
+	if err != nil {
+		t.Fatalf("NewSessionLogger: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), "-debug.jsonl") {
+			t.Errorf("unexpected debug sidecar when debug=false: %s", e.Name())
+		}
+	}
+}
+
 func TestNewSessionLogger_CreatesFiles(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "prof-id-1", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "prof-id-1", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatalf("NewSessionLogger: %v", err)
 	}
@@ -96,7 +190,7 @@ func TestNewSessionLogger_CreatesFiles(t *testing.T) {
 
 func TestNewSessionLogger_SessionStartInJSONL(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "pid-abc", "test-profile", "v0.2.0")
+	l, err := NewSessionLogger(dir, "pid-abc", "test-profile", "v0.2.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +230,7 @@ func TestNewSessionLogger_SessionStartInJSONL(t *testing.T) {
 
 func TestNewSessionLogger_TextHeader(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "pid-abc", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "pid-abc", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +289,7 @@ func buildTestRequest(model string, msgs int, tools int, systemPrompt string) *l
 
 func TestFullLifecycle_Success(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +448,7 @@ func TestFullLifecycle_Success(t *testing.T) {
 
 func TestFullLifecycle_Error(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +514,7 @@ func TestFullLifecycle_Error(t *testing.T) {
 
 func TestFullLifecycle_Canceled(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +581,7 @@ func TestFullLifecycle_Canceled(t *testing.T) {
 
 func TestFullLifecycle_WithAttemptError(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +717,7 @@ func TestNewSessionLogger_InvalidDir(t *testing.T) {
 	// So instead, test with a non-existent parent directory in logsDir to trigger MkdirAll failure.
 	// Use an existing file as a component of the path.
 	badDir := filePath + "/subdir"
-	_, err := NewSessionLogger(badDir, "pid", "profile", "v0.1")
+	_, err := NewSessionLogger(badDir, "pid", "profile", "v0.1", false)
 	if err == nil {
 		t.Error("expected error when logsDir path is under a file, got nil")
 	}
@@ -634,7 +728,7 @@ func TestNewSessionLogger_CreatesLogsDir(t *testing.T) {
 	dir := makeTempDir(t)
 	subdir := dir + "/nested/logs/dir"
 
-	l, err := NewSessionLogger(subdir, "pid", "profile", "v0.1.0")
+	l, err := NewSessionLogger(subdir, "pid", "profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatalf("NewSessionLogger with nested dir: %v", err)
 	}
@@ -653,7 +747,7 @@ func TestNewSessionLogger_CreatesLogsDir(t *testing.T) {
 
 func TestMultipleRequests_CountersAccumulate(t *testing.T) {
 	dir := makeTempDir(t)
-	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0")
+	l, err := NewSessionLogger(dir, "prof-id", "my-profile", "v0.1.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}

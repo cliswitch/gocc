@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/google/uuid"
 	"github.com/cliswitch/gocc/internal/config"
 	"github.com/cliswitch/gocc/internal/launcher"
 	"github.com/cliswitch/gocc/internal/proxy"
 	"github.com/cliswitch/gocc/internal/stats"
 	"github.com/cliswitch/gocc/internal/tui"
+	"github.com/google/uuid"
 )
 
 // Version is set by go build -ldflags "-X main.Version=...".
@@ -25,7 +25,7 @@ func main() {
 }
 
 func run() error {
-	profileFlag, claudeArgs := launcher.ExtractGoccFlags(os.Args[1:])
+	profileFlag, debugFlag, claudeArgs := launcher.ExtractGoccFlags(os.Args[1:])
 
 	claudePath, err := launcher.FindClaude()
 	if err != nil {
@@ -75,10 +75,10 @@ func run() error {
 		return launcher.ExecClaude(claudePath, resolved.EnvVars, allArgs)
 	}
 
-	return launchWithProxy(cfg, claudePath, profile, allArgs, resolved.EnvVars)
+	return launchWithProxy(cfg, claudePath, profile, allArgs, resolved.EnvVars, debugFlag)
 }
 
-func launchWithProxy(cfg *config.Config, claudePath string, profile config.Profile, args []string, resolvedEnvVars []string) error {
+func launchWithProxy(cfg *config.Config, claudePath string, profile config.Profile, args []string, resolvedEnvVars []string, debug bool) error {
 	allProfiles := make(map[string]config.Profile)
 	for _, p := range cfg.Profiles {
 		allProfiles[p.ID] = p
@@ -88,7 +88,7 @@ func launchWithProxy(cfg *config.Config, claudePath string, profile config.Profi
 	configDir, _ := config.Dir()
 	logsDir := filepath.Join(configDir, "logs")
 
-	logger, err := stats.NewSessionLogger(logsDir, profile.ID, profile.Name, Version)
+	logger, err := stats.NewSessionLogger(logsDir, profile.ID, profile.Name, Version, debug)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to create session logger: %v\n", err)
 	}
