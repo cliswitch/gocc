@@ -1,6 +1,7 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working with this repository.
+References to Claude Code below describe the downstream tool that `gocc` launches, not a restriction on which agent may use these instructions.
 
 ## Project Overview
 
@@ -67,4 +68,3 @@ Stored at `~/.gocc/config.yaml`. Supports protocols: `openai_chat`, `openai_resp
 
 - **Spec**: `docs/superpowers/specs/2026-03-14-gocc-design.md` — full design with config schema, TUI mockups, protocol details
 - **Plan**: `docs/superpowers/plans/2026-03-14-gocc-implementation.md` — step-by-step implementation plan with file structure and task breakdown
-
