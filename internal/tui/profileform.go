@@ -13,7 +13,7 @@ import (
 
 // Focus indices for non-native profile fields.
 const (
-	fName = iota
+	fName     = iota
 	fProtocol // cycling
 	fBaseURL
 	fAPIKey
@@ -31,14 +31,15 @@ const (
 	// ── Fallback ──
 	fFallback // summary, enter to edit
 	// ── Advanced ──
-	fHeaders   // summary, enter to edit
-	fExtraBody // summary, enter to edit
-	fProxies   // summary, enter to edit
+	fHeaders    // summary, enter to edit
+	fExtraBody  // summary, enter to edit
+	fProxies    // summary, enter to edit
+	fResilience // summary, enter to edit
 	// ── Custom ──
-	fClaudeArgs   // summary, enter to edit
-	fCustomEnv    // summary, enter to edit
-	fInheritArgs  // inline toggle
-	fInheritEnv   // inline toggle
+	fClaudeArgs  // summary, enter to edit
+	fCustomEnv   // summary, enter to edit
+	fInheritArgs // inline toggle
+	fInheritEnv  // inline toggle
 	fFieldCount
 )
 
@@ -61,6 +62,7 @@ var focusInputMap = [fFieldCount]int{
 	-1, // fHeaders (summary)
 	-1, // fExtraBody (summary)
 	-1, // fProxies (summary)
+	-1, // fResilience (summary)
 	-1, // fClaudeArgs (summary)
 	-1, // fCustomEnv (summary)
 	-1, // fInheritArgs (toggle)
@@ -226,14 +228,13 @@ func (m *profileFormModel) isDirty() bool {
 	return !reflect.DeepEqual(snap, m.origProfile)
 }
 
-
 func isCycleField(focus int) bool {
 	return focus == fProtocol || focus == fMainModel || focus == fEffortLevel
 }
 
 func isSummaryField(focus int) bool {
 	return focus == fFallback || focus == fHeaders || focus == fExtraBody || focus == fProxies ||
-		focus == fClaudeArgs || focus == fCustomEnv
+		focus == fResilience || focus == fClaudeArgs || focus == fCustomEnv
 }
 
 func isToggleField(focus int) bool {
@@ -431,6 +432,11 @@ func (m Model) handleProfileFormEnter() (tea.Model, tea.Cmd) {
 			m.proxyEdit = newProxyEditModel(pf.profile.Proxy)
 			m.mode = ModeProxyEdit
 			return m, nil
+		case fResilience:
+			pf.applyToProfile()
+			m.resilienceEdit = newResilienceEditModel(pf.profile.Resilience)
+			m.mode = ModeResilienceEdit
+			return m, nil
 		case fClaudeArgs:
 			pf.applyToProfile()
 			m.textEditor = newTextareaEditor("Edit Claude Args", "One argument per line",
@@ -556,6 +562,7 @@ func (m Model) viewProfileForm() string {
 		s += pf.viewSummaryField(fHeaders, "custom_headers", collectionSummary(len(pf.profile.CustomHeaders), "header", "empty"))
 		s += pf.viewSummaryField(fExtraBody, "extra_body", collectionSummary(len(pf.profile.ExtraBody), "field", "empty"))
 		s += pf.viewSummaryField(fProxies, "proxies", proxiesSummary(pf.profile.Proxy))
+		s += pf.viewSummaryField(fResilience, "resilience", resilienceSummary(pf.profile.Resilience))
 
 		s += sectionDivider("Custom")
 		s += pf.viewSummaryField(fClaudeArgs, "claude_args", collectionSummary(len(pf.profile.ClaudeArgs), "arg", "none"))
@@ -707,6 +714,29 @@ func proxiesSummary(p config.Proxy) string {
 	}
 	if len(parts) == 0 {
 		return dimStyle.Render("(empty)")
+	}
+	return strings.Join(parts, ", ")
+}
+
+func resilienceSummary(r config.Resilience) string {
+	parts := []string{}
+	if r.MaxConcurrentRequests > 0 {
+		parts = append(parts, fmt.Sprintf("max=%d", r.MaxConcurrentRequests))
+	}
+	if r.QueueTimeoutMS > 0 {
+		parts = append(parts, fmt.Sprintf("queue=%dms", r.QueueTimeoutMS))
+	}
+	if r.Retry.MaxRetries > 0 {
+		parts = append(parts, fmt.Sprintf("retries=%d", r.Retry.MaxRetries))
+		if r.Retry.BaseDelayMS > 0 {
+			parts = append(parts, fmt.Sprintf("base=%dms", r.Retry.BaseDelayMS))
+		}
+		if r.Retry.MaxDelayMS > 0 {
+			parts = append(parts, fmt.Sprintf("max_delay=%dms", r.Retry.MaxDelayMS))
+		}
+	}
+	if len(parts) == 0 {
+		return dimStyle.Render("(disabled)")
 	}
 	return strings.Join(parts, ", ")
 }

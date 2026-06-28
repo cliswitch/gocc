@@ -69,6 +69,8 @@ type CompleteRecord struct {
 	StopReason          string    `json:"stop_reason,omitempty"`
 	ActualModel         string    `json:"actual_model,omitempty"`
 	AttemptNum          int       `json:"attempt_num,omitempty"`
+	RetryAttempts       int       `json:"retry_attempts,omitempty"`
+	QueueWaitMS         int64     `json:"queue_wait_ms,omitempty"`
 }
 
 // AttemptErrorRecord is written when a single attempt (within a fallback chain) fails.
@@ -80,6 +82,9 @@ type AttemptErrorRecord struct {
 	TargetProtocol string    `json:"target_protocol"`
 	TargetBaseURL  string    `json:"target_base_url"`
 	TargetModel    string    `json:"target_model"`
+	RetryAttempt   int       `json:"retry_attempt,omitempty"`
+	WillRetry      bool      `json:"will_retry,omitempty"`
+	RetryDelayMS   int64     `json:"retry_delay_ms,omitempty"`
 	StatusCode     int       `json:"status_code"`
 	IsTimeout      bool      `json:"is_timeout"`
 	IsConnError    bool      `json:"is_conn_error"`

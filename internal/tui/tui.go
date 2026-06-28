@@ -17,6 +17,7 @@ const (
 	ModeTextareaEdit
 	ModeFallbackEdit
 	ModeProxyEdit
+	ModeResilienceEdit
 )
 
 // DisplayProfile is a summary of a profile for list display.
@@ -49,12 +50,13 @@ type Model struct {
 	statusMsg string
 
 	// Sub-models (initialized on mode switch)
-	profileForm  *profileFormModel
-	globalConfig *globalConfigModel
-	textEditor   *textareaEditor
-	fallbackEdit *fallbackEditModel
-	proxyEdit    *proxyEditModel
-	deleteTarget *DisplayProfile // for delete confirm
+	profileForm    *profileFormModel
+	globalConfig   *globalConfigModel
+	textEditor     *textareaEditor
+	fallbackEdit   *fallbackEditModel
+	proxyEdit      *proxyEditModel
+	resilienceEdit *resilienceEditModel
+	deleteTarget   *DisplayProfile // for delete confirm
 }
 
 // NewModel creates a new TUI model.
@@ -99,6 +101,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateFallbackEdit(msg)
 	case ModeProxyEdit:
 		return m.updateProxyEdit(msg)
+	case ModeResilienceEdit:
+		return m.updateResilienceEdit(msg)
 	}
 	return m, nil
 }
@@ -120,6 +124,8 @@ func (m Model) View() string {
 		return m.viewFallbackEdit()
 	case ModeProxyEdit:
 		return m.viewProxyEdit()
+	case ModeResilienceEdit:
+		return m.viewResilienceEdit()
 	}
 	return ""
 }

@@ -2,12 +2,15 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/llmapimux/llmapimux"
 	"github.com/cliswitch/gocc/internal/config"
+	"github.com/llmapimux/llmapimux"
 )
 
 func TestBuildCandidates(t *testing.T) {
@@ -150,18 +153,20 @@ func TestExtraBodyToRawNil(t *testing.T) {
 
 func TestBuildRequestModifier(t *testing.T) {
 	primary := config.Profile{
-		ID:      "abc",
-		BaseURL: "https://api.openai.com",
-		APIKey:  "sk-primary",
+		ID:       "abc",
+		Protocol: config.ProtocolOpenAI,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-primary",
 		ExtraBody: map[string]any{
 			"service_tier": "priority",
 		},
 		FallbackChain: []string{"def"},
 	}
 	fallback := config.Profile{
-		ID:      "def",
-		BaseURL: "https://api.anthropic.com",
-		APIKey:  "sk-fallback",
+		ID:       "def",
+		Protocol: config.ProtocolAnthropic,
+		BaseURL:  "https://api.anthropic.com",
+		APIKey:   "sk-fallback",
 		// no extra_body
 	}
 	allProfiles := map[string]config.Profile{
@@ -180,8 +185,9 @@ func TestBuildRequestModifier(t *testing.T) {
 	// Simulate primary target: should set OutboundExtra
 	req := &llmapimux.Request{}
 	target := llmapimux.RouteResult{
-		BaseURL: "https://api.openai.com",
-		APIKey:  "sk-primary",
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-primary",
 	}
 	reqMod(context.Background(), req, target)
 	if req.OutboundExtra == nil {
@@ -194,8 +200,9 @@ func TestBuildRequestModifier(t *testing.T) {
 	// Simulate fallback target: should NOT set OutboundExtra
 	req2 := &llmapimux.Request{}
 	target2 := llmapimux.RouteResult{
-		BaseURL: "https://api.anthropic.com",
-		APIKey:  "sk-fallback",
+		Protocol: llmapimux.ProtocolAnthropic,
+		BaseURL:  "https://api.anthropic.com",
+		APIKey:   "sk-fallback",
 	}
 	reqMod(context.Background(), req2, target2)
 	if req2.OutboundExtra != nil {
@@ -205,9 +212,10 @@ func TestBuildRequestModifier(t *testing.T) {
 
 func TestBuildRequestModifierNoExtraBody(t *testing.T) {
 	primary := config.Profile{
-		ID:      "abc",
-		BaseURL: "https://api.openai.com",
-		APIKey:  "sk-primary",
+		ID:       "abc",
+		Protocol: config.ProtocolOpenAI,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-primary",
 	}
 	allProfiles := map[string]config.Profile{"abc": primary}
 
@@ -215,8 +223,185 @@ func TestBuildRequestModifierNoExtraBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if reqMod != nil {
-		t.Error("expected nil modifier when no profiles have extra_body")
+	if reqMod == nil {
+		t.Fatal("expected non-nil modifier to strip Claude Code billing header")
+	}
+	req := &llmapimux.Request{
+		SystemPrompt: []llmapimux.ContentPart{textPart("x-anthropic-billing-header: cc_version=2.1; cch=abcd;\nYou are Claude Code.")},
+	}
+	reqMod(context.Background(), req, llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com/",
+		APIKey:   "sk-primary",
+	})
+	if req.OutboundExtra != nil {
+		t.Error("expected nil OutboundExtra when no profiles have extra_body")
+	}
+	if got := req.SystemPrompt[0].Text.Text; got != "You are Claude Code." {
+		t.Fatalf("system text = %q, want billing header stripped", got)
+	}
+}
+
+func TestRouteEndpointKeyNormalizesBaseURLAndDoesNotLeakAPIKey(t *testing.T) {
+	rr := llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://API.OpenAI.com/v1/",
+		APIKey:   "sk-secret",
+	}
+	key := routeEndpointKey(rr)
+	if strings.Contains(key, "sk-secret") {
+		t.Fatalf("endpoint key leaks API key: %s", key)
+	}
+	if !strings.Contains(key, "openai_chat|https://api.openai.com/v1|key=") {
+		t.Fatalf("endpoint key = %q, want protocol + normalized base URL + key digest", key)
+	}
+
+	same := routeEndpointKey(llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com/v1",
+		APIKey:   "sk-secret",
+	})
+	if key != same {
+		t.Fatalf("normalized endpoint keys differ: %q != %q", key, same)
+	}
+
+	otherKey := routeEndpointKey(llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com/v1",
+		APIKey:   "sk-other",
+	})
+	if key == otherKey {
+		t.Fatal("different API keys should produce different endpoint keys")
+	}
+}
+
+func TestBuildResilienceControllerNilWhenDisabled(t *testing.T) {
+	controller := buildResilienceController([]config.Profile{{
+		ID:       "abc",
+		Protocol: config.ProtocolOpenAI,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-test",
+	}})
+	if controller != nil {
+		t.Fatalf("controller = %#v, want nil when resilience is unset", controller)
+	}
+}
+
+func TestResilienceControllerAcquireLimitsByEndpoint(t *testing.T) {
+	controller := buildResilienceController([]config.Profile{{
+		ID:       "abc",
+		Protocol: config.ProtocolOpenAI,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-test",
+		Resilience: config.Resilience{
+			MaxConcurrentRequests: 1,
+			QueueTimeoutMS:        10,
+		},
+	}})
+	rc, ok := controller.(*resilienceController)
+	if !ok {
+		t.Fatalf("controller type = %T, want *resilienceController", controller)
+	}
+
+	target := llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com/",
+		APIKey:   "sk-test",
+	}
+	first, err := rc.Acquire(context.Background(), llmapimux.RouteInfo{}, target, 1, 0)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if first.Permit == nil || first.Limit != 1 || first.Active != 1 {
+		t.Fatalf("first admission = %+v, want permit limit=1 active=1", first)
+	}
+
+	_, err = rc.Acquire(context.Background(), llmapimux.RouteInfo{}, target, 1, 0)
+	if !errors.Is(err, errQueueTimeout) {
+		t.Fatalf("second acquire err = %v, want errQueueTimeout", err)
+	}
+
+	first.Permit.Release()
+	third, err := rc.Acquire(context.Background(), llmapimux.RouteInfo{}, target, 1, 0)
+	if err != nil {
+		t.Fatalf("third acquire after release: %v", err)
+	}
+	third.Permit.Release()
+}
+
+func TestResilienceControllerRetryPolicy(t *testing.T) {
+	retry5xx := true
+	retryTransport := true
+	retry429 := false
+	controller := buildResilienceController([]config.Profile{{
+		ID:       "abc",
+		Protocol: config.ProtocolOpenAI,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-test",
+		Resilience: config.Resilience{
+			Retry: config.RetryConfig{
+				MaxRetries:     2,
+				BaseDelayMS:    100,
+				MaxDelayMS:     1000,
+				Retry5xx:       &retry5xx,
+				RetryTransport: &retryTransport,
+				Retry429:       &retry429,
+			},
+		},
+	}})
+	rc := controller.(*resilienceController)
+	target := llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-test",
+	}
+
+	delay, ok := rc.RetryDelay(context.Background(), llmapimux.RouteInfo{}, target, llmapimux.SendError{StatusCode: 500}, 1, 0)
+	if !ok || delay != 100*time.Millisecond {
+		t.Fatalf("500 retry = %v/%v, want true/100ms", ok, delay)
+	}
+	delay, ok = rc.RetryDelay(context.Background(), llmapimux.RouteInfo{}, target, llmapimux.SendError{IsConnError: true}, 1, 1)
+	if !ok || delay != 200*time.Millisecond {
+		t.Fatalf("transport retry = %v/%v, want true/200ms", ok, delay)
+	}
+	if _, ok := rc.RetryDelay(context.Background(), llmapimux.RouteInfo{}, target, llmapimux.SendError{StatusCode: 400}, 1, 0); ok {
+		t.Fatal("400 should not retry")
+	}
+	if _, ok := rc.RetryDelay(context.Background(), llmapimux.RouteInfo{}, target, llmapimux.SendError{StatusCode: 429}, 1, 0); ok {
+		t.Fatal("429 should not retry when retry_429=false")
+	}
+	if _, ok := rc.RetryDelay(context.Background(), llmapimux.RouteInfo{}, target, llmapimux.SendError{StatusCode: 500}, 1, 2); ok {
+		t.Fatal("retry attempt at max_retries should not retry")
+	}
+}
+
+func TestResilienceControllerRetryAfterWhen429Enabled(t *testing.T) {
+	retry429 := true
+	controller := buildResilienceController([]config.Profile{{
+		ID:       "abc",
+		Protocol: config.ProtocolOpenAI,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-test",
+		Resilience: config.Resilience{
+			Retry: config.RetryConfig{
+				MaxRetries: 1,
+				Retry429:   &retry429,
+			},
+		},
+	}})
+	rc := controller.(*resilienceController)
+	target := llmapimux.RouteResult{
+		Protocol: llmapimux.ProtocolOpenAIChat,
+		BaseURL:  "https://api.openai.com",
+		APIKey:   "sk-test",
+	}
+
+	delay, ok := rc.RetryDelay(context.Background(), llmapimux.RouteInfo{}, target, llmapimux.SendError{
+		StatusCode: http.StatusTooManyRequests,
+		Header:     http.Header{"Retry-After": []string{"3"}},
+	}, 1, 0)
+	if !ok || delay != 3*time.Second {
+		t.Fatalf("429 Retry-After retry = %v/%v, want true/3s", ok, delay)
 	}
 }
 

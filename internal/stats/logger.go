@@ -331,6 +331,9 @@ func (l *SessionLogger) OnAttemptError(ctx context.Context, e llmapimux.AttemptE
 		TargetProtocol: string(e.Target.Protocol),
 		TargetBaseURL:  e.Target.BaseURL,
 		TargetModel:    e.Target.Model,
+		RetryAttempt:   e.RetryAttempt,
+		WillRetry:      e.WillRetry,
+		RetryDelayMS:   e.RetryDelay.Milliseconds(),
 		StatusCode:     e.SendErr.StatusCode,
 		IsTimeout:      e.SendErr.IsTimeout,
 		IsConnError:    e.SendErr.IsConnError,
@@ -340,7 +343,7 @@ func (l *SessionLogger) OnAttemptError(ctx context.Context, e llmapimux.AttemptE
 
 	// Write text log.
 	writeTextAttemptError(l.textFile, now, e.AttemptNum, string(e.Target.Protocol),
-		e.Target.BaseURL, e.Target.Model, e.SendErr.StatusCode, elapsed, errMsg)
+		e.Target.BaseURL, e.Target.Model, e.RetryAttempt, e.WillRetry, e.RetryDelay, e.SendErr.StatusCode, elapsed, errMsg)
 }
 
 // OnComplete implements llmapimux.StatsReporter.
@@ -398,13 +401,15 @@ func (l *SessionLogger) OnComplete(ctx context.Context, e llmapimux.CompleteEven
 		StopReason:          stopReason,
 		ActualModel:         e.ActualModel,
 		AttemptNum:          e.AttemptNum,
+		RetryAttempts:       e.RetryAttempts,
+		QueueWaitMS:         e.QueueWait.Milliseconds(),
 	}
 	l.writeRecord(rec)
 
 	// Write text log.
 	writeTextComplete(l.textFile, e.Time, textStatus, e.TotalLatency,
 		e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.CacheReadTokens, e.Usage.ThinkingTokens,
-		e.OutputThroughput, e.ActualModel, e.AttemptNum, errMsg)
+		e.OutputThroughput, e.ActualModel, e.AttemptNum, e.RetryAttempts, e.QueueWait, errMsg)
 	writeTextRequestEnd(l.textFile)
 
 	// Clean up requestState.

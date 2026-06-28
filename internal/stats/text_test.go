@@ -288,7 +288,7 @@ func TestWriteTextAttemptError(t *testing.T) {
 	defer f.Close()
 
 	ts := time.Date(2026, 3, 14, 15, 5, 1, 0, time.UTC)
-	writeTextAttemptError(f, ts, 1, "openai_chat", "https://api.openai.com/v1", "gpt-4o", 429, 200*time.Millisecond, "rate limit exceeded")
+	writeTextAttemptError(f, ts, 1, "openai_chat", "https://api.openai.com/v1", "gpt-4o", 0, true, 250*time.Millisecond, 429, 200*time.Millisecond, "rate limit exceeded")
 
 	f.Seek(0, 0)
 	buf := make([]byte, 4096)
@@ -302,6 +302,7 @@ func TestWriteTextAttemptError(t *testing.T) {
 		"model=gpt-4o",
 		"status=429",
 		"dur=200ms",
+		"retry_in=250ms",
 		`"rate limit exceeded"`,
 	}
 
@@ -329,7 +330,7 @@ func TestWriteTextComplete(t *testing.T) {
 	t.Run("OK no fallback", func(t *testing.T) {
 		f.Truncate(0)
 		f.Seek(0, 0)
-		writeTextComplete(f, ts, "OK", 2800*time.Millisecond, 1024, 256, 512, 106, 91.4, "gpt-4o-2024-08-06", 1, "")
+		writeTextComplete(f, ts, "OK", 2800*time.Millisecond, 1024, 256, 512, 106, 91.4, "gpt-4o-2024-08-06", 1, 0, 0, "")
 		f.Seek(0, 0)
 		buf := make([]byte, 4096)
 		n, _ := f.Read(buf)
@@ -359,7 +360,7 @@ func TestWriteTextComplete(t *testing.T) {
 	t.Run("OK with fallback", func(t *testing.T) {
 		f.Truncate(0)
 		f.Seek(0, 0)
-		writeTextComplete(f, ts, "OK", 4800*time.Millisecond, 1024, 256, 0, 0, 53.2, "gemini-2.0-flash", 3, "")
+		writeTextComplete(f, ts, "OK", 4800*time.Millisecond, 1024, 256, 0, 0, 53.2, "gemini-2.0-flash", 3, 2, 75*time.Millisecond, "")
 		f.Seek(0, 0)
 		buf := make([]byte, 4096)
 		n, _ := f.Read(buf)
@@ -367,6 +368,12 @@ func TestWriteTextComplete(t *testing.T) {
 
 		if !strings.Contains(got, "attempt=3") {
 			t.Errorf("missing attempt=3, got: %s", got)
+		}
+		if !strings.Contains(got, "retries=2") {
+			t.Errorf("missing retries=2, got: %s", got)
+		}
+		if !strings.Contains(got, "queue=75ms") {
+			t.Errorf("missing queue=75ms, got: %s", got)
 		}
 		// cache_r=0 should be omitted
 		if strings.Contains(got, "cache_r=") {
@@ -377,7 +384,7 @@ func TestWriteTextComplete(t *testing.T) {
 	t.Run("ERROR", func(t *testing.T) {
 		f.Truncate(0)
 		f.Seek(0, 0)
-		writeTextComplete(f, ts, "ERROR", 800*time.Millisecond, 0, 0, 0, 0, 0, "", 1, "internal server error")
+		writeTextComplete(f, ts, "ERROR", 800*time.Millisecond, 0, 0, 0, 0, 0, "", 1, 0, 0, "internal server error")
 		f.Seek(0, 0)
 		buf := make([]byte, 4096)
 		n, _ := f.Read(buf)
@@ -394,7 +401,7 @@ func TestWriteTextComplete(t *testing.T) {
 	t.Run("CANCELED", func(t *testing.T) {
 		f.Truncate(0)
 		f.Seek(0, 0)
-		writeTextComplete(f, ts, "CANCELED", 1600*time.Millisecond, 512, 30, 0, 0, 0, "", 1, "context canceled")
+		writeTextComplete(f, ts, "CANCELED", 1600*time.Millisecond, 512, 30, 0, 0, 0, "", 1, 0, 0, "context canceled")
 		f.Seek(0, 0)
 		buf := make([]byte, 4096)
 		n, _ := f.Read(buf)

@@ -69,10 +69,16 @@ func writeTextFirstByte(f *os.File, t time.Time, ttfb time.Duration, attemptNum 
 }
 
 // writeTextAttemptError writes a FAIL#N line for a failed attempt in a fallback chain.
-func writeTextAttemptError(f *os.File, t time.Time, attemptNum int, protocol string, baseURL string, model string, statusCode int, elapsed time.Duration, errMsg string) {
+func writeTextAttemptError(f *os.File, t time.Time, attemptNum int, protocol string, baseURL string, model string, retryAttempt int, willRetry bool, retryDelay time.Duration, statusCode int, elapsed time.Duration, errMsg string) {
 	host := extractHost(baseURL)
 	line := fmt.Sprintf("%s FAIL#%d %s %s model=%s status=%d dur=%s %q",
 		t.Format("15:04:05"), attemptNum, protocol, host, model, statusCode, fmtDuration(elapsed), errMsg)
+	if retryAttempt > 0 {
+		line += fmt.Sprintf(" retry_attempt=%d", retryAttempt)
+	}
+	if willRetry {
+		line += fmt.Sprintf(" retry_in=%s", fmtDuration(retryDelay))
+	}
 	fmt.Fprintln(f, line)
 }
 
@@ -80,7 +86,7 @@ func writeTextAttemptError(f *os.File, t time.Time, attemptNum int, protocol str
 // status is one of "OK", "ERROR", "CANCELED".
 // Zero-value token fields are omitted. tps is omitted when 0.
 // actualModel and attemptNum are only shown when relevant (OK with attempt>1, etc.).
-func writeTextComplete(f *os.File, t time.Time, status string, totalDur time.Duration, inputTokens int, outputTokens int, cacheReadTokens int, thinkingTokens int, tps float64, actualModel string, attemptNum int, errMsg string) {
+func writeTextComplete(f *os.File, t time.Time, status string, totalDur time.Duration, inputTokens int, outputTokens int, cacheReadTokens int, thinkingTokens int, tps float64, actualModel string, attemptNum int, retryAttempts int, queueWait time.Duration, errMsg string) {
 	line := fmt.Sprintf("%s FINISH %s dur=%s", t.Format("15:04:05"), status, fmtDuration(totalDur))
 	if inputTokens > 0 {
 		line += fmt.Sprintf(" in=%d", inputTokens)
@@ -102,6 +108,12 @@ func writeTextComplete(f *os.File, t time.Time, status string, totalDur time.Dur
 	}
 	if attemptNum > 1 {
 		line += fmt.Sprintf(" attempt=%d", attemptNum)
+	}
+	if retryAttempts > 0 {
+		line += fmt.Sprintf(" retries=%d", retryAttempts)
+	}
+	if queueWait > 0 {
+		line += fmt.Sprintf(" queue=%s", fmtDuration(queueWait))
 	}
 	if errMsg != "" {
 		line += fmt.Sprintf(" %q", errMsg)
@@ -127,4 +139,3 @@ func writeTextSessionFooter(f *os.File, dur time.Duration, totalReqs int, totalE
 	fmt.Fprintf(f, "  tokens: in=%d out=%d%s\n", totalInput, totalOutput, tokPerSec)
 	fmt.Fprintf(f, "%s\n", textSeparatorDouble)
 }
-

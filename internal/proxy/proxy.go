@@ -15,12 +15,15 @@ import (
 func StartProxy(primary config.Profile, allProfiles map[string]config.Profile, token string, statsReporter llmapimux.StatsReporter) (int, func(), error) {
 	profiles := resolveProfileChain(primary, allProfiles)
 	candidateFn := buildCandidateFunc(profiles)
-	router := llmapimux.NewCircuitBreakerRouter(candidateFn)
+	router := llmapimux.NewCircuitBreakerRouter(candidateFn, llmapimux.WithCircuitKeyFunc(routeEndpointKey))
 	auth := &tokenAuthenticator{token: token}
 
 	opts := []llmapimux.MuxOption{llmapimux.WithAuthenticator(auth)}
 	if statsReporter != nil {
 		opts = append(opts, llmapimux.WithStatsReporter(statsReporter))
+	}
+	if controller := buildResilienceController(profiles); controller != nil {
+		opts = append(opts, llmapimux.WithAttemptController(controller))
 	}
 	reqMod, err := buildRequestModifier(profiles)
 	if err != nil {
@@ -144,8 +147,9 @@ func extraBodyToRaw(m map[string]any) (map[string]json.RawMessage, error) {
 }
 
 type endpointKey struct {
-	baseURL string
-	apiKey  string
+	protocol llmapimux.Protocol
+	baseURL  string
+	apiKey   string
 }
 
 // buildRequestModifier produces the single RequestModifier hooked into the
@@ -162,7 +166,7 @@ func buildRequestModifier(profiles []config.Profile) (llmapimux.RequestModifier,
 		if err != nil {
 			return nil, fmt.Errorf("profile %q: %w", p.Name, err)
 		}
-		key := endpointKey{p.BaseURL, p.APIKey}
+		key := endpointKey{protocolToLLM(p.Protocol), normalizeBaseURL(p.BaseURL), p.APIKey}
 		// First profile with this key wins (matches fallback priority order).
 		if _, exists := lookup[key]; !exists {
 			lookup[key] = raw
@@ -171,7 +175,7 @@ func buildRequestModifier(profiles []config.Profile) (llmapimux.RequestModifier,
 
 	return func(ctx context.Context, req *llmapimux.Request, target llmapimux.RouteResult) {
 		stripClaudeCodeBillingHeader(req, target)
-		if extra, ok := lookup[endpointKey{target.BaseURL, target.APIKey}]; ok {
+		if extra, ok := lookup[endpointKey{target.Protocol, normalizeBaseURL(target.BaseURL), target.APIKey}]; ok {
 			req.OutboundExtra = extra
 		}
 	}, nil

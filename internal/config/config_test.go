@@ -81,6 +81,34 @@ func TestValidateConfig(t *testing.T) {
 	}
 }
 
+func TestValidateConfigResilienceRejectsNegativeValues(t *testing.T) {
+	cfg := &Config{
+		Profiles: []Profile{
+			{
+				ID:       "abc1234567",
+				Name:     "test",
+				Protocol: ProtocolOpenAI,
+				BaseURL:  "https://api.openai.com",
+				APIKey:   "sk-test",
+				Resilience: Resilience{
+					MaxConcurrentRequests: -1,
+					QueueTimeoutMS:        -2,
+					Retry: RetryConfig{
+						MaxRetries:  -3,
+						BaseDelayMS: -4,
+						MaxDelayMS:  -5,
+					},
+				},
+			},
+		},
+	}
+
+	errs := ValidateConfig(cfg)
+	if len(errs) != 5 {
+		t.Fatalf("validation errors = %d, want 5: %v", len(errs), errs)
+	}
+}
+
 func TestLoadSaveConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -178,6 +206,7 @@ func TestShouldInheritGlobalEnv(t *testing.T) {
 
 func TestCloneProfileDeepCopiesNewFields(t *testing.T) {
 	falseVal := false
+	trueVal := true
 	orig := Profile{
 		ID:        "abc123",
 		Name:      "test",
@@ -185,6 +214,13 @@ func TestCloneProfileDeepCopiesNewFields(t *testing.T) {
 		CustomEnv: map[string]string{"KEY": "value"},
 		InheritGlobalArgs: &falseVal,
 		InheritGlobalEnv:  &falseVal,
+		Resilience: Resilience{
+			Retry: RetryConfig{
+				Retry5xx:       &falseVal,
+				RetryTransport: &trueVal,
+				Retry429:       &trueVal,
+			},
+		},
 	}
 
 	clone := CloneProfile(orig)
@@ -201,6 +237,15 @@ func TestCloneProfileDeepCopiesNewFields(t *testing.T) {
 	}
 	if clone.InheritGlobalEnv == nil || *clone.InheritGlobalEnv != false {
 		t.Error("InheritGlobalEnv not correctly cloned")
+	}
+	if clone.Resilience.Retry.Retry5xx == nil || *clone.Resilience.Retry.Retry5xx != false {
+		t.Error("Resilience.Retry.Retry5xx not correctly cloned")
+	}
+	if clone.Resilience.Retry.RetryTransport == nil || *clone.Resilience.Retry.RetryTransport != true {
+		t.Error("Resilience.Retry.RetryTransport not correctly cloned")
+	}
+	if clone.Resilience.Retry.Retry429 == nil || *clone.Resilience.Retry.Retry429 != true {
+		t.Error("Resilience.Retry.Retry429 not correctly cloned")
 	}
 
 	// Verify deep copy: modifying clone does not affect original
@@ -222,6 +267,11 @@ func TestCloneProfileDeepCopiesNewFields(t *testing.T) {
 	*clone.InheritGlobalEnv = true
 	if *orig.InheritGlobalEnv != false {
 		t.Error("InheritGlobalEnv clone is not independent (shares pointer)")
+	}
+
+	*clone.Resilience.Retry.Retry5xx = true
+	if *orig.Resilience.Retry.Retry5xx != false {
+		t.Error("Resilience.Retry.Retry5xx clone is not independent (shares pointer)")
 	}
 }
 
@@ -317,6 +367,62 @@ func TestYAMLRoundTripExtraBody(t *testing.T) {
 	}
 	if eb["user"] != "my-team" {
 		t.Errorf("user = %v, want my-team", eb["user"])
+	}
+}
+
+func TestYAMLRoundTripResilience(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	retry5xx := true
+	retryTransport := true
+	retry429 := false
+	cfg := &Config{
+		Profiles: []Profile{
+			{
+				ID:       "abc1234567",
+				Name:     "test",
+				Protocol: ProtocolOpenAI,
+				BaseURL:  "https://api.openai.com",
+				APIKey:   "sk-test",
+				Resilience: Resilience{
+					MaxConcurrentRequests: 6,
+					QueueTimeoutMS:        1500,
+					Retry: RetryConfig{
+						MaxRetries:     2,
+						BaseDelayMS:    250,
+						MaxDelayMS:     5000,
+						Retry5xx:       &retry5xx,
+						RetryTransport: &retryTransport,
+						Retry429:       &retry429,
+					},
+				},
+			},
+		},
+	}
+
+	if err := SaveConfigTo(cfg, path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := LoadConfigFrom(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := loaded.Profiles[0].Resilience
+	if got.MaxConcurrentRequests != 6 || got.QueueTimeoutMS != 1500 {
+		t.Fatalf("resilience = %+v, want concurrency=6 queue=1500", got)
+	}
+	if got.Retry.MaxRetries != 2 || got.Retry.BaseDelayMS != 250 || got.Retry.MaxDelayMS != 5000 {
+		t.Fatalf("retry = %+v, want max=2 base=250 max_delay=5000", got.Retry)
+	}
+	if got.Retry.Retry5xx == nil || !*got.Retry.Retry5xx {
+		t.Fatal("retry_5xx not preserved")
+	}
+	if got.Retry.RetryTransport == nil || !*got.Retry.RetryTransport {
+		t.Fatal("retry_transport not preserved")
+	}
+	if got.Retry.Retry429 == nil || *got.Retry.Retry429 {
+		t.Fatal("retry_429=false not preserved")
 	}
 }
 

@@ -46,6 +46,7 @@ type Profile struct {
 	CustomHeaders      map[string]string `yaml:"custom_headers,omitempty"`
 	ExtraBody          map[string]any    `yaml:"extra_body,omitempty"`
 	Proxy              Proxy             `yaml:"proxy,omitempty"`
+	Resilience         Resilience        `yaml:"resilience,omitempty"`
 	FallbackChain      []string          `yaml:"fallback_chain,omitempty"`
 	ClaudeArgs         []string          `yaml:"claude_args,omitempty"`
 	CustomEnv          map[string]string `yaml:"custom_env,omitempty"`
@@ -80,6 +81,33 @@ type Proxy struct {
 	HTTPProxy  string `yaml:"http_proxy,omitempty"`
 	HTTPSProxy string `yaml:"https_proxy,omitempty"`
 	NoProxy    string `yaml:"no_proxy,omitempty"`
+}
+
+type Resilience struct {
+	MaxConcurrentRequests int         `yaml:"max_concurrent_requests,omitempty"`
+	QueueTimeoutMS        int         `yaml:"queue_timeout_ms,omitempty"`
+	Retry                 RetryConfig `yaml:"retry,omitempty"`
+}
+
+type RetryConfig struct {
+	MaxRetries     int   `yaml:"max_retries,omitempty"`
+	BaseDelayMS    int   `yaml:"base_delay_ms,omitempty"`
+	MaxDelayMS     int   `yaml:"max_delay_ms,omitempty"`
+	Retry5xx       *bool `yaml:"retry_5xx,omitempty"`
+	RetryTransport *bool `yaml:"retry_transport,omitempty"`
+	Retry429       *bool `yaml:"retry_429,omitempty"`
+}
+
+func (r RetryConfig) ShouldRetry5xx() bool {
+	return r.Retry5xx == nil || *r.Retry5xx
+}
+
+func (r RetryConfig) ShouldRetryTransport() bool {
+	return r.RetryTransport == nil || *r.RetryTransport
+}
+
+func (r RetryConfig) ShouldRetry429() bool {
+	return r.Retry429 != nil && *r.Retry429
 }
 
 const profileIDBytes = 5
@@ -155,7 +183,18 @@ func CloneProfile(p Profile) Profile {
 		v := *p.InheritGlobalEnv
 		dup.InheritGlobalEnv = &v
 	}
+	dup.Resilience.Retry.Retry5xx = cloneBoolPtr(p.Resilience.Retry.Retry5xx)
+	dup.Resilience.Retry.RetryTransport = cloneBoolPtr(p.Resilience.Retry.RetryTransport)
+	dup.Resilience.Retry.Retry429 = cloneBoolPtr(p.Resilience.Retry.Retry429)
 	return dup
+}
+
+func cloneBoolPtr(v *bool) *bool {
+	if v == nil {
+		return nil
+	}
+	dup := *v
+	return &dup
 }
 
 func ValidateConfig(cfg *Config) []error {
@@ -184,6 +223,21 @@ func ValidateConfig(cfg *Config) []error {
 			if !profileIDs[fbID] {
 				errs = append(errs, fmt.Errorf("profile %q: fallback references unknown profile %q", p.Name, fbID))
 			}
+		}
+		if p.Resilience.MaxConcurrentRequests < 0 {
+			errs = append(errs, fmt.Errorf("profile %q: resilience.max_concurrent_requests must be >= 0", p.Name))
+		}
+		if p.Resilience.QueueTimeoutMS < 0 {
+			errs = append(errs, fmt.Errorf("profile %q: resilience.queue_timeout_ms must be >= 0", p.Name))
+		}
+		if p.Resilience.Retry.MaxRetries < 0 {
+			errs = append(errs, fmt.Errorf("profile %q: resilience.retry.max_retries must be >= 0", p.Name))
+		}
+		if p.Resilience.Retry.BaseDelayMS < 0 {
+			errs = append(errs, fmt.Errorf("profile %q: resilience.retry.base_delay_ms must be >= 0", p.Name))
+		}
+		if p.Resilience.Retry.MaxDelayMS < 0 {
+			errs = append(errs, fmt.Errorf("profile %q: resilience.retry.max_delay_ms must be >= 0", p.Name))
 		}
 	}
 	return errs

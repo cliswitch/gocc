@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cliswitch/gocc/internal/config"
 )
 
@@ -86,6 +87,21 @@ func TestIsDirtyChangedClaudeArgs(t *testing.T) {
 	}
 }
 
+func TestIsDirtyChangedResilience(t *testing.T) {
+	p := config.Profile{
+		ID:       "abc123",
+		Name:     "Test",
+		Protocol: config.ProtocolOpenAI,
+	}
+	pf := newProfileFormModel(p, false, Callbacks{})
+
+	pf.profile.Resilience.MaxConcurrentRequests = 6
+
+	if !pf.isDirty() {
+		t.Error("form should be dirty after changing Resilience")
+	}
+}
+
 func TestIsDirtyNativeProfileUnchanged(t *testing.T) {
 	p := config.Profile{
 		ID:       config.NativeProfileID,
@@ -96,6 +112,50 @@ func TestIsDirtyNativeProfileUnchanged(t *testing.T) {
 
 	if pf.isDirty() {
 		t.Error("native profile with no changes should not be dirty")
+	}
+}
+
+func TestProfileFormViewIncludesResilienceSummary(t *testing.T) {
+	p := config.Profile{
+		ID:       "abc123",
+		Name:     "Test",
+		Protocol: config.ProtocolOpenAI,
+		Resilience: config.Resilience{
+			MaxConcurrentRequests: 6,
+			Retry: config.RetryConfig{
+				MaxRetries: 2,
+			},
+		},
+	}
+	pf := newProfileFormModel(p, false, Callbacks{})
+	m := Model{mode: ModeProfileEdit, profileForm: pf}
+
+	view := m.viewProfileForm()
+	if !strings.Contains(view, "resilience") {
+		t.Fatalf("profile form missing resilience field:\n%s", view)
+	}
+	if !strings.Contains(view, "max=6") || !strings.Contains(view, "retries=2") {
+		t.Fatalf("profile form resilience summary missing values:\n%s", view)
+	}
+}
+
+func TestProfileFormEnterOpensResilienceEdit(t *testing.T) {
+	p := config.Profile{
+		ID:       "abc123",
+		Name:     "Test",
+		Protocol: config.ProtocolOpenAI,
+	}
+	pf := newProfileFormModel(p, false, Callbacks{})
+	pf.focus = fResilience
+	m := Model{mode: ModeProfileEdit, profileForm: pf}
+
+	m = updateModel(m, keyType(tea.KeyEnter))
+
+	if m.mode != ModeResilienceEdit {
+		t.Fatalf("mode = %v, want ModeResilienceEdit", m.mode)
+	}
+	if m.resilienceEdit == nil {
+		t.Fatal("resilienceEdit is nil")
 	}
 }
 

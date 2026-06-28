@@ -340,6 +340,8 @@ func TestFullLifecycle_Success(t *testing.T) {
 		StopReason:       "end_turn",
 		ActualModel:      "gpt-4o-2024-08-06",
 		AttemptNum:       1,
+		RetryAttempts:    1,
+		QueueWait:        42 * time.Millisecond,
 	})
 
 	if err := l.Close(); err != nil {
@@ -406,6 +408,12 @@ func TestFullLifecycle_Success(t *testing.T) {
 	}
 	if compRec["actual_model"] != "gpt-4o-2024-08-06" {
 		t.Errorf("actual_model = %v, want gpt-4o-2024-08-06", compRec["actual_model"])
+	}
+	if compRec["retry_attempts"] != float64(1) {
+		t.Errorf("retry_attempts = %v, want 1", compRec["retry_attempts"])
+	}
+	if compRec["queue_wait_ms"] != float64(42) {
+		t.Errorf("queue_wait_ms = %v, want 42", compRec["queue_wait_ms"])
 	}
 
 	// Verify session_end counters.
@@ -601,8 +609,9 @@ func TestFullLifecycle_WithAttemptError(t *testing.T) {
 
 	// Attempt 1 fails.
 	l.OnAttemptError(ctx, llmapimux.AttemptErrorEvent{
-		RequestID:  reqID,
-		AttemptNum: 1,
+		RequestID:    reqID,
+		AttemptNum:   1,
+		RetryAttempt: 0,
 		Target: llmapimux.RouteResult{
 			Protocol: llmapimux.ProtocolOpenAIChat,
 			BaseURL:  "https://api.openai.com/v1",
@@ -614,6 +623,8 @@ func TestFullLifecycle_WithAttemptError(t *testing.T) {
 			IsConnError: false,
 			Err:         errors.New("rate limit exceeded"),
 		},
+		WillRetry:  true,
+		RetryDelay: 250 * time.Millisecond,
 	})
 
 	// Fallback succeeds.
@@ -632,6 +643,8 @@ func TestFullLifecycle_WithAttemptError(t *testing.T) {
 		OutputThroughput: 50.0,
 		ActualModel:      "gemini-2.0-flash",
 		AttemptNum:       2,
+		RetryAttempts:    1,
+		QueueWait:        18 * time.Millisecond,
 	})
 
 	if err := l.Close(); err != nil {
@@ -676,6 +689,12 @@ func TestFullLifecycle_WithAttemptError(t *testing.T) {
 	if aeRec["error"] != "rate limit exceeded" {
 		t.Errorf("error = %v, want rate limit exceeded", aeRec["error"])
 	}
+	if aeRec["will_retry"] != true {
+		t.Errorf("will_retry = %v, want true", aeRec["will_retry"])
+	}
+	if aeRec["retry_delay_ms"] != float64(250) {
+		t.Errorf("retry_delay_ms = %v, want 250", aeRec["retry_delay_ms"])
+	}
 
 	// Verify text log has FAIL and attempt info.
 	textData, _ := os.ReadFile(logPath)
@@ -688,6 +707,9 @@ func TestFullLifecycle_WithAttemptError(t *testing.T) {
 	}
 	if !strings.Contains(text, "attempt=2") {
 		t.Errorf("text log missing attempt=2 on FINISH\n%s", text)
+	}
+	if !strings.Contains(text, "retry_in=250ms") || !strings.Contains(text, "retries=1") || !strings.Contains(text, "queue=18ms") {
+		t.Errorf("text log missing retry/queue details\n%s", text)
 	}
 }
 
